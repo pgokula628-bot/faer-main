@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Threat Lens - Security Scanner",
+  "version": "1.0",
+  "description": "Scan webpages for phishing and security threats with AI-powered analysis.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

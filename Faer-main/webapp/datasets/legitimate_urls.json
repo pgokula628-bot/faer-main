@@ -1,0 +1,14 @@
+[
+  {"url": "https://google.com/", "text": "Google search images maps drive", "label": "Safe"},
+  {"url": "https://github.com/login", "text": "GitHub sign in password passkey enterprise", "label": "Safe"},
+  {"url": "https://amazon.com/", "text": "Amazon shop delivery prime orders", "label": "Safe"},
+  {"url": "https://paypal.com/signin", "text": "PayPal send money checkout buyer protection", "label": "Safe"},
+  {"url": "https://microsoft.com/", "text": "Microsoft products office cloud enterprise", "label": "Safe"},
+  {"url": "https://netflix.com/browse", "text": "Netflix watch movies shows billing", "label": "Safe"},
+  {"url": "https://linkedin.com/feed", "text": "LinkedIn professional network jobs", "label": "Safe"},
+  {"url": "https://en.wikipedia.org/wiki/Phishing", "text": "Wikipedia phishing social engineering article", "label": "Safe"},
+  {"url": "https://zoom.us/join", "text": "Zoom meeting join webinar calendar", "label": "Safe"},
+  {"url": "https://stackoverflow.com/questions", "text": "Stack Overflow developer questions answers", "label": "Safe"},
+  {"url": "https://apple.com/", "text": "Apple iPhone Mac support store", "label": "Safe"},
+  {"url": "https://dropbox.com/login", "text": "Dropbox files sync share cloud", "label": "Safe"}
+]

@@ -1,0 +1,13 @@
+[
+  {"sender": "service@paypa1-security.com", "subject": "URGENT account frozen", "body": "Dear customer verify password debit card SSN click http://paypal-login.xyz", "label": "Dangerous"},
+  {"sender": "refunds@irs-gov-tax.top", "subject": "IRS refund approved", "body": "Claim refund SSN routing credit card date of birth attached form", "label": "Dangerous"},
+  {"sender": "dhl-delivery@dhl-tracking-alerts.icu", "subject": "URGENT shipment blocked", "body": "Package forfeited legal action download attachment pay fee immediately", "label": "Dangerous"},
+  {"sender": "accounts@metamask-secure-vault.net", "subject": "Wallet compromised", "body": "Enter recovery phrase seed phrase password restore crypto balance", "label": "Dangerous"},
+  {"sender": "admin@microsoft-office-verify.net-login.xyz", "subject": "FINAL WARNING credentials expire", "body": "Office 365 password expires failure to comply account closing OneDrive", "label": "Dangerous"},
+  {"sender": "support@chase-secure-update.com", "subject": "Account locked alert", "body": "Chase SSN ATM pin credentials required security key verify now", "label": "Dangerous"},
+  {"sender": "billing@netflix-payment-info.com", "subject": "Membership cancelled", "body": "Netflix declined card update billing login details act now", "label": "Dangerous"},
+  {"sender": "alert@bofa-online-update.click", "subject": "Verification required", "body": "Bank of America suspended account login update online portal", "label": "Dangerous"},
+  {"sender": "security@wellsfargo-verify-secure.ga", "subject": "Unauthorized access", "body": "Wells Fargo debit card social security number lock verify", "label": "Dangerous"},
+  {"sender": "noreply@lottery-winner-prize.bid", "subject": "Congratulations you won", "body": "Selected winner claim your million dollars inheritance beneficiary free money", "label": "Dangerous"},
+  {"sender": "it-helpdesk@company-secure-portal.work", "subject": "Password reset required", "body": "Dear user your password expires click link verify credentials OTP", "label": "Suspicious"}
+]

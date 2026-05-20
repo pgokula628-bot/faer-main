@@ -1,0 +1,10 @@
+[
+  {"sender": "noreply@github.com", "subject": "Password reset request", "body": "Reset your GitHub password ignore if not requested", "label": "Safe"},
+  {"sender": "no-reply@accounts.google.com", "subject": "Security alert new login", "body": "New login on your Google account review settings if not you", "label": "Safe"},
+  {"sender": "info@netflix.com", "subject": "Your Netflix invoice", "body": "Thank you for membership billing statement premium plan", "label": "Safe"},
+  {"sender": "no-reply@zoom.us", "subject": "Meeting invitation", "body": "Join Zoom meeting project kickoff calendar link", "label": "Safe"},
+  {"sender": "manager@company.com", "subject": "Weekly team sync", "body": "Hi team agenda milestones roadmap conference room tomorrow", "label": "Safe"},
+  {"sender": "billing@aws.amazon.com", "subject": "AWS monthly invoice", "body": "Amazon Web Services invoice review billing panel", "label": "Safe"},
+  {"sender": "support@slack.com", "subject": "Workspace invitation", "body": "Slack invite link collaborate channels message", "label": "Safe"},
+  {"sender": "hr@company.com", "subject": "Holiday calendar", "body": "Corporate newsletter benefits health insurance intranet", "label": "Safe"}
+]
