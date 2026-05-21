@@ -1,9 +1,8 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Shield, Clock, LayoutDashboard, Terminal, AlertTriangle, Zap, Globe, ChevronRight, Activity, LogOut, User, Menu, X, Mail, Send, Inbox, AlertCircle, CheckCircle } from 'lucide-react'
 import Login from './Login'
 import Register from './Register'
 import { analyzeWebsite, analyzeEmail } from './ruleEngine'
-import { analyzeWebsiteWithML, analyzeEmailWithML } from './mlEngine'
 import { buildUnifiedThreatAnalysis, mergeFullReport } from './threatAnalysis'
 import { fetchLiveThreatIntel, extractUrlsFromText } from './chromeThreatIntel'
 import ThreatAnalysisReport from './ThreatAnalysisReport'
@@ -325,7 +324,19 @@ Return ONLY valid JSON:
 
             setAnalysisPhase('ml')
             await new Promise(r => setTimeout(r, 300))
-            const ml = analyzeWebsiteWithML(targetUrl, targetText || '', liveIntel)
+            let ml = { verdict: 'Safe', risk_score: 0, risk_factors: [], why_suspicious: '', feature_snapshot: {} }
+            try {
+                const mlResponse = await fetch('http://localhost:5000/api/analyze/url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: targetUrl, bodyText: targetText || '', liveIntel })
+                })
+                if (mlResponse.ok) {
+                    ml = await mlResponse.json()
+                }
+            } catch (e) {
+                console.error('Python ML Backend disconnected or errored:', e)
+            }
 
             const finalReport = finalizeWebsiteReport(targetUrl, targetText, gemini, rules, ml, liveIntel)
             setCachedReport('website', targetUrl, targetText || '', finalReport)
@@ -383,7 +394,19 @@ Return ONLY valid JSON:
 
             setEmailAnalysisPhase('ml')
             await new Promise(r => setTimeout(r, 300))
-            const ml = analyzeEmailWithML(useSender, useSubject, useBody, liveIntel)
+            let ml = { verdict: 'Safe', risk_score: 0, risk_factors: [], why_suspicious: '', feature_snapshot: {} }
+            try {
+                const mlResponse = await fetch('http://localhost:5000/api/analyze/email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender: useSender, subject: useSubject, body: useBody, liveIntel })
+                })
+                if (mlResponse.ok) {
+                    ml = await mlResponse.json()
+                }
+            } catch (e) {
+                console.error('Python ML Backend disconnected or errored:', e)
+            }
 
             const finalReport = finalizeEmailReport(gemini, rules, ml, liveIntel)
             setCachedReport('email', useSender, useSubject + '||' + useBody, finalReport)
