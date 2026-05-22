@@ -1859,11 +1859,22 @@ h1, h2, h3, h4, h5, h6 {
   border-top: 1px solid var(--border-primary);
 }
 
-.threat-analysis-title {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0 0 var(--space-4);
-  color: var(--text-primary);
+.analysis-para {
+  font-size: 0.94rem;
+  line-height: 1.75;
+  color: var(--text-secondary);
+  margin: 0 0 1.25rem;
+  letter-spacing: 0.01em;
+}
+
+.analysis-para:last-child {
+  margin-bottom: 0;
+}
+
+.threat-analysis-body {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-primary);
 }
 
 .test-results-strip {

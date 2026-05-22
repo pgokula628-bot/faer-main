@@ -213,64 +213,52 @@ function App() {
 
     const buildWebsiteGeminiPrompt = (targetUrl, targetText, ruleResult, liveIntel) => {
         const rulesSummary = JSON.stringify(ruleResult.rule_evaluations || [])
-        return `You are a senior cybersecurity analyst writing a report for a non-technical user.
-
-CRITICAL: Do NOT mention AI, machine learning, APIs, models, Gemini, datasets, or any software tools. Write only factual security analysis.
+        return `You are a senior cybersecurity analyst. Write ONLY factual findings—never mention AI, machine learning, APIs, models, or software tools.
 
 URL: ${targetUrl}
 Page content: ${(targetText || '').substring(0, 4000)}
-Live blocklist check: ${liveIntel?.summary || 'unavailable'}
-Rule scan data: ${rulesSummary}
+Live blocklist: ${liveIntel?.summary || 'unavailable'}
+Security rule results: ${rulesSummary}
 
-For ALL 13 rules, state whether each rule FITS (yes) or DOES NOT FIT (no) with specific evidence from the URL/content.
-Explain in detail why this site is SAFE or UNSAFE. Reference live blocklist results naturally (e.g. "listed on active phishing blocklists") without naming vendors.
+Write exactly 4 paragraphs in "evidence_paragraphs". Each paragraph must be 4–6 sentences with strong, direct points. Start paragraph 1 with either "This website is suspicious because" or "This website appears safe because" (match verdict). Quote specific facts from the URL (e.g. "it uses HTTP not HTTPS", "the domain mimics PayPal", "the page asks for your SSN"). Paragraph 2 must explain which security checks FIT and which DO NOT FIT, in plain language. Paragraph 3 must describe dangerous wording or forms on the page. Paragraph 4 must state the final conclusion and what the user should do.
 
 Return ONLY valid JSON:
 {
   "verdict": "Safe" | "Suspicious" | "Dangerous",
   "risk_score": 0-100,
-  "summary": "one line headline",
-  "detailed_analysis": "3-6 sentences, rich detail, no tool names",
-  "why_safe": ["detailed reason 1", "reason 2"],
-  "why_unsafe": ["detailed reason 1", "reason 2"],
+  "summary": "short headline",
+  "evidence_paragraphs": ["paragraph 1", "paragraph 2", "paragraph 3", "paragraph 4"],
   "rule_assessments": [{"rule_id": 1, "rule_name": "HTTP vs HTTPS", "fits": true, "evidence": "specific fact"}],
-  "evidence": [{"category": "Connection", "finding": "fact", "implication": "what it means"}],
-  "action": "clear user advice"
+  "action": "one sentence advice"
 }`
     }
 
     const buildEmailGeminiPrompt = (sender, subject, body, ruleResult, liveIntel) => {
         const rulesSummary = JSON.stringify(ruleResult.rule_evaluations || [])
-        return `You are a senior cybersecurity analyst writing a report for a non-technical user.
-
-CRITICAL: Do NOT mention AI, machine learning, APIs, models, or any software tools. Write only factual security analysis.
+        return `You are a senior cybersecurity analyst. Write ONLY factual findings—never mention AI, machine learning, APIs, models, or software tools.
 
 Sender: ${sender}
 Subject: ${subject}
 Body: ${body.substring(0, 5000)}
-Live blocklist check on links: ${liveIntel?.summary || 'unavailable'}
-Rule scan data: ${rulesSummary}
+Live blocklist on links: ${liveIntel?.summary || 'unavailable'}
+Security rule results: ${rulesSummary}
 
-For ALL 14 rules, state FITS yes/no with evidence. Rule 1 (spoofed sender) must be answered explicitly.
-Explain in detail why this email is SAFE or UNSAFE.
+Write exactly 4 paragraphs in "evidence_paragraphs". Each paragraph 4–6 sentences with strong points. Paragraph 1 must start with "This email is suspicious because" or "This email appears safe because". Quote exact facts (sender address, subject words, links, requests for passwords). Paragraph 2: which checks FIT vs DO NOT FIT (include spoofed sender). Paragraph 3: social engineering and link danger. Paragraph 4: conclusion and user advice.
 
 Return ONLY valid JSON:
 {
   "verdict": "Safe" | "Suspicious" | "Dangerous",
   "risk_score": 0-100,
-  "summary": "headline",
-  "detailed_analysis": "3-6 sentences, rich detail",
-  "why_safe": ["reason"],
-  "why_unsafe": ["reason"],
+  "summary": "short headline",
+  "evidence_paragraphs": ["p1", "p2", "p3", "p4"],
   "rule_assessments": [{"rule_id": 1, "rule_name": "Spoofed Sender", "fits": false, "evidence": "..."}],
-  "evidence": [{"category": "Sender", "finding": "...", "implication": "..."}],
-  "action": "advice"
+  "action": "one sentence advice"
 }`
     }
 
     const finalizeWebsiteReport = (targetUrl, targetText, gemini, rules, ml, liveIntel) => {
         const unified = buildUnifiedThreatAnalysis({
-            gemini, rules, ml, liveIntel, targetLabel: 'website', maxRules: 13
+            gemini, rules, ml, liveIntel, targetLabel: 'website', maxRules: 13, targetId: targetUrl
         })
         return mergeFullReport({
             ...rules,
@@ -281,9 +269,9 @@ Return ONLY valid JSON:
         }, unified)
     }
 
-    const finalizeEmailReport = (gemini, rules, ml, liveIntel) => {
+    const finalizeEmailReport = (sender, gemini, rules, ml, liveIntel) => {
         const unified = buildUnifiedThreatAnalysis({
-            gemini, rules, ml, liveIntel, targetLabel: 'email', maxRules: 14
+            gemini, rules, ml, liveIntel, targetLabel: 'email', maxRules: 14, targetId: sender
         })
         return mergeFullReport({
             ...rules,
@@ -297,7 +285,7 @@ Return ONLY valid JSON:
         setAnalysisPhase('live')
 
         const cached = getCachedReport('website', targetUrl, targetText || '')
-        if (cached?.analysis_mode === 'unified-v2') {
+        if (cached?.analysis_mode === 'unified-v3') {
             setReport(cached)
             setHistory(saveHistory(cached))
             setAnalysisPhase('done')
@@ -368,7 +356,7 @@ Return ONLY valid JSON:
         setEmailAnalysisPhase('live')
 
         const cached = getCachedReport('email', useSender, useSubject + '||' + useBody)
-        if (cached?.analysis_mode === 'unified-v2') {
+        if (cached?.analysis_mode === 'unified-v3') {
             setEmailReport(cached)
             setEmailAnalysisPhase('done')
             setEmailStatus('success')
@@ -408,7 +396,7 @@ Return ONLY valid JSON:
                 console.error('Python ML Backend disconnected or errored:', e)
             }
 
-            const finalReport = finalizeEmailReport(gemini, rules, ml, liveIntel)
+            const finalReport = finalizeEmailReport(useSender, gemini, rules, ml, liveIntel)
             setCachedReport('email', useSender, useSubject + '||' + useBody, finalReport)
             setEmailReport(finalReport)
             setEmailAnalysisPhase('done')
