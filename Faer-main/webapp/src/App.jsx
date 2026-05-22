@@ -220,16 +220,23 @@ Page content: ${(targetText || '').substring(0, 4000)}
 Live blocklist: ${liveIntel?.summary || 'unavailable'}
 Security rule results: ${rulesSummary}
 
-Write exactly 4 paragraphs in "evidence_paragraphs". Each paragraph must be 4–6 sentences with strong, direct points. Start paragraph 1 with either "This website is suspicious because" or "This website appears safe because" (match verdict). Quote specific facts from the URL (e.g. "it uses HTTP not HTTPS", "the domain mimics PayPal", "the page asks for your SSN"). Paragraph 2 must explain which security checks FIT and which DO NOT FIT, in plain language. Paragraph 3 must describe dangerous wording or forms on the page. Paragraph 4 must state the final conclusion and what the user should do.
+Provide three text fields (no tool names anywhere):
+1) "opening_paragraph": 8–10 full sentences. Must start with "This website is suspicious because" OR "This website appears safe because". Cite blocklist result and main red flags with quoted facts from the URL.
+2) "content_paragraph": exactly 4 sentences about page wording, forms, urgency, sensitive data requests, bad links.
+3) "conclusion_paragraph": 3–5 sentences with final rating and clear user advice.
+
+Also return "rule_assessments" for ALL 13 rules with fits true/false and one-sentence evidence each.
 
 Return ONLY valid JSON:
 {
   "verdict": "Safe" | "Suspicious" | "Dangerous",
   "risk_score": 0-100,
   "summary": "short headline",
-  "evidence_paragraphs": ["paragraph 1", "paragraph 2", "paragraph 3", "paragraph 4"],
-  "rule_assessments": [{"rule_id": 1, "rule_name": "HTTP vs HTTPS", "fits": true, "evidence": "specific fact"}],
-  "action": "one sentence advice"
+  "opening_paragraph": "8-10 sentences...",
+  "content_paragraph": "4 sentences...",
+  "conclusion_paragraph": "3-5 sentences...",
+  "rule_assessments": [{"rule_id": 1, "rule_name": "HTTP vs HTTPS", "fits": true, "evidence": "one sentence"}],
+  "action": "short advice"
 }`
     }
 
@@ -243,16 +250,23 @@ Body: ${body.substring(0, 5000)}
 Live blocklist on links: ${liveIntel?.summary || 'unavailable'}
 Security rule results: ${rulesSummary}
 
-Write exactly 4 paragraphs in "evidence_paragraphs". Each paragraph 4–6 sentences with strong points. Paragraph 1 must start with "This email is suspicious because" or "This email appears safe because". Quote exact facts (sender address, subject words, links, requests for passwords). Paragraph 2: which checks FIT vs DO NOT FIT (include spoofed sender). Paragraph 3: social engineering and link danger. Paragraph 4: conclusion and user advice.
+Provide three text fields (no tool names):
+1) "opening_paragraph": 8–10 sentences. Start with "This email is suspicious because" OR "This email appears safe because". Quote sender, subject, blocklist, main threats.
+2) "content_paragraph": exactly 4 sentences on body wording, links, urgency, credential requests.
+3) "conclusion_paragraph": 3–5 sentences with final advice.
+
+Return "rule_assessments" for ALL 14 rules with fits and evidence.
 
 Return ONLY valid JSON:
 {
   "verdict": "Safe" | "Suspicious" | "Dangerous",
   "risk_score": 0-100,
   "summary": "short headline",
-  "evidence_paragraphs": ["p1", "p2", "p3", "p4"],
+  "opening_paragraph": "8-10 sentences...",
+  "content_paragraph": "4 sentences...",
+  "conclusion_paragraph": "3-5 sentences...",
   "rule_assessments": [{"rule_id": 1, "rule_name": "Spoofed Sender", "fits": false, "evidence": "..."}],
-  "action": "one sentence advice"
+  "action": "short advice"
 }`
     }
 
@@ -285,7 +299,7 @@ Return ONLY valid JSON:
         setAnalysisPhase('live')
 
         const cached = getCachedReport('website', targetUrl, targetText || '')
-        if (cached?.analysis_mode === 'unified-v3') {
+        if (cached?.analysis_mode === 'unified-v4') {
             setReport(cached)
             setHistory(saveHistory(cached))
             setAnalysisPhase('done')
@@ -356,7 +370,7 @@ Return ONLY valid JSON:
         setEmailAnalysisPhase('live')
 
         const cached = getCachedReport('email', useSender, useSubject + '||' + useBody)
-        if (cached?.analysis_mode === 'unified-v3') {
+        if (cached?.analysis_mode === 'unified-v4') {
             setEmailReport(cached)
             setEmailAnalysisPhase('done')
             setEmailStatus('success')

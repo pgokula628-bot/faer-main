@@ -1,7 +1,7 @@
-/** Build 3–4 evidence paragraphs only (no sub-headings, no tool names) */
+/** Structured analysis: opening (8–10 lines) → rule box → content (4 lines) → conclusion */
 
 const VERDICT_RANK = { Safe: 0, Suspicious: 1, Dangerous: 2 }
-const BANNED = /\b(gemini|openphish|safe browsing|machine learning|artificial intelligence|ml model|classifier|random forest|xgboost|naive bayes|phish tank|phishtank|api|apis|dataset|datasets|ensemble|heuristic scanner|rule engine|correlating these behavioral)\b/gi
+const BANNED = /\b(gemini|openphish|safe browsing|machine learning|artificial intelligence|ml model|classifier|api|apis|dataset|ensemble|heuristic scanner|rule engine)\b/gi
 
 function pickVerdict(...verdicts) {
     return verdicts.reduce((best, v) => (VERDICT_RANK[v] || 0) > (VERDICT_RANK[best] || 0) ? v : best, 'Safe')
@@ -20,7 +20,7 @@ function buildRuleAssessments(geminiRules, ruleEvaluations, maxRules) {
         if (!engine && !ai) continue
         merged.push({
             rule_id: id,
-            rule_name: engine?.rule_name || ai?.rule_name || `Security check ${id}`,
+            rule_name: engine?.rule_name || ai?.rule_name || `Check ${id}`,
             fits: engine ? engine.fits === 'yes' : (ai?.fits === true || ai?.fits === 'yes'),
             evidence: clean([engine?.reason, ai?.evidence].filter(Boolean).join(' '))
         })
@@ -33,92 +33,92 @@ function buildRuleAssessments(geminiRules, ruleEvaluations, maxRules) {
     }))
 }
 
-function quoteFact(text) {
-    const t = clean(text)
-    return t ? ` Specifically, ${t.charAt(0).toLowerCase() + t.slice(1)}` : ''
-}
+function buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matchedRules) {
+    const isWeb = targetLabel === 'website'
+    const label = isWeb ? 'website' : 'email'
+    const safeOpener = verdict === 'Safe'
 
-function buildParagraph1(verdict, targetLabel, urlOrSender, liveIntel, matchedRules) {
-    const subject = targetLabel === 'website' ? `The website at "${urlOrSender}"` : `The email from "${urlOrSender}"`
-    const topRules = matchedRules.slice(0, 3).map(r => r.rule_name.toLowerCase()).join(', ')
+    const sentences = []
 
-    if (verdict === 'Safe') {
-        return `${subject} does not show strong signs of phishing or fraud based on current checks. Live reputation data did not place this address on active criminal blocklists, and the structural review found no critical red flags that would normally appear on credential-stealing pages.${quoteFact(liveIntel?.summary)}`
+    if (safeOpener) {
+        sentences.push(`This ${label} appears safe because it does not show the usual patterns of a phishing or fraud attack.`)
+        sentences.push(`The address "${targetId}" was reviewed against live threat blocklists that major browsers use, and it was not listed as an active malicious destination at the time of this scan.`)
+    } else {
+        sentences.push(`This ${label} is suspicious because it combines several warning signs that attackers use to steal passwords, card numbers, or identity documents.`)
+        sentences.push(`The target "${targetId}" was evaluated against live criminal blocklists and structural phishing checks, and enough serious indicators were found to treat it as high risk.`)
     }
 
-    let opener = `${subject} is ${verdict.toLowerCase()} and should be treated as a potential phishing or fraud attempt. `
     if (liveIntel?.any_threat) {
-        opener += `This address appears on live browser-grade threat blocklists that are updated continuously, which is a strong indicator that other users have already reported it as malicious.${quoteFact(liveIntel.summary)} `
+        sentences.push(`It is listed on an active browser-grade threat blocklist, meaning other victims have likely already reported it; that alone is a strong reason not to trust it.`)
+        sentences.push(clean(liveIntel.summary))
+    } else if (!safeOpener) {
+        sentences.push(`It is not on a public blocklist yet, but that does not make it safe—many new scam pages exist for only a few hours before they are reported.`)
     } else {
-        opener += `Although it is not on a public blocklist at this moment, multiple independent checks still found serious problems. `
+        sentences.push(clean(liveIntel?.summary || `No live blocklist match was found for this address, which supports a lower immediate threat level.`))
     }
-    if (matchedRules.length) {
-        opener += `The clearest problems involve ${topRules}, each of which is a known tactic used to steal logins or payment details.`
+
+    if (matchedRules.length > 0 && !safeOpener) {
+        const names = matchedRules.slice(0, 4).map(r => r.rule_name).join(', ')
+        sentences.push(`Structural review flagged ${matchedRules.length} problem area(s), including ${names}, each tied to a known phishing technique.`)
+        sentences.push(`For example, ${matchedRules[0].evidence || 'the link or sender does not match how the real organization normally operates'}.`)
+    } else if (!safeOpener) {
+        sentences.push(`Even without a blocklist hit, the link structure and message content still raise concern and should not be used for logins or payments.`)
+    } else {
+        sentences.push(`The structural checks that normally catch fake login pages and brand impersonation did not trigger on this target.`)
     }
-    return opener
+
+    if (isWeb && !safeOpener) {
+        sentences.push(`You should assume any login form on this page could send your credentials to an attacker rather than the real company.`)
+        sentences.push(`If you reached this page from an email, text, or ad, close it and open the service by typing the official address yourself.`)
+    } else if (!isWeb && !safeOpener) {
+        sentences.push(`If the message pressures you to act within minutes, threatens account closure, or asks you to open an unusual link, that is intentional manipulation.`)
+        sentences.push(`Legitimate companies rarely demand sensitive data by email and almost never use threatening language in the subject line.`)
+    } else {
+        sentences.push(`Continue to verify the sender and URL before sharing any personal information, as conditions can change if the link is reused later.`)
+    }
+
+    return sentences.join(' ')
 }
 
-function buildParagraph2(targetLabel, matchedRules, clearedRules) {
-    const fitsLines = matchedRules.map(r =>
-        `the "${r.rule_name}" check applies because ${r.evidence || 'the pattern matches known attack pages'}`
-    )
-    const clearSample = clearedRules.filter(r => !r.fits).slice(0, 2).map(r =>
-        `the "${r.rule_name}" check does not apply${r.evidence ? ` because ${r.evidence}` : ''}`
-    )
+function buildFallbackContent(targetLabel, gemini, rules, hostname) {
+    const points = [
+        ...(rules.iocs || rules.indicators || []).map(i => clean(i.value || i.detail)),
+        clean(gemini?.content_paragraph),
+    ].filter(Boolean)
 
-    let p = `A full rule-by-rule review was performed on this ${targetLabel}. `
-    if (fitsLines.length) {
-        p += `The following security checks matched: ${fitsLines.join('; ')}. `
-    } else {
-        p += `None of the major structural phishing checks matched, which lowers—but does not eliminate—concern. `
-    }
-    if (clearSample.length) {
-        p += `For transparency, ${clearSample.join('; ')}. `
-    }
-    p += `When a check "fits," it means the page or message contains the exact pattern that check was designed to catch (for example, a fake brand name in the link, or language that pressures you to act within minutes).`
-    return p
-}
+    const unique = [...new Set(points)].slice(0, 4)
 
-function buildParagraph3(targetLabel, gemini, rules, ml, hostname) {
-    const contentFindings = (rules.iocs || rules.indicators || []).map(i => clean(i.value || i.detail)).filter(Boolean)
-    const geminiPoints = (gemini?.why_unsafe || gemini?.evidence || []).map(e =>
-        clean(typeof e === 'string' ? e : `${e.finding || ''} ${e.implication || ''}`)
-    ).filter(Boolean)
-
-    const points = [...contentFindings, ...geminiPoints, ...(ml?.risk_factors || []).map(clean)].filter(Boolean)
-    const unique = [...new Set(points)].slice(0, 5)
-
-    let p = `Looking at what the ${targetLabel} actually says and asks you to do, `
+    const s = []
+    s.push(`The ${targetLabel} content was examined for language that pressures you, copies a famous brand, or asks for data a real company would not request by email or on a random page.`)
     if (unique.length) {
-        p += `this is suspicious because: ${unique.map((u, i) => `${i === 0 ? '' : ' '}${i > 0 && i === unique.length - 1 ? 'and ' : i > 0 ? 'also, ' : ''}"${u}"`).join('')}. `
-    } else if (gemini?.detailed_analysis) {
-        p += clean(gemini.detailed_analysis) + ' '
+        unique.forEach(p => s.push(`The page or message includes: "${p}".`))
     } else {
-        p += `the wording and requests do not match how legitimate organizations normally communicate. `
+        s.push(`Wording may imitate official notices with words like "verify", "suspended", or "unauthorized activity" to create panic.`)
+        s.push(`Any request for passwords, one-time codes, card numbers, or government IDs on this ${targetLabel} is a serious red flag.`)
     }
-
     if (hostname && targetLabel === 'website') {
-        p += `The domain "${hostname}" must be read carefully: attackers often add extra words, hyphens, or misspellings so it looks like a famous company while sending your data elsewhere. `
+        s.push(`The hostname "${hostname}" should be compared letter-by-letter to the real company domain before you enter anything.`)
     }
-
-    p += `Any request to enter a password, card number, government ID, or "verify" an account on a page you reached from an unexpected link is a classic sign that someone is trying to copy a real login screen.`
-    return p
+    return s.slice(0, 4).join(' ')
 }
 
-function buildParagraph4(verdict, targetLabel, action, riskScore) {
+function buildFallbackConclusion(verdict, targetLabel, riskScore, action) {
     const advice = clean(action) || (verdict === 'Dangerous'
-        ? `Do not enter personal or financial information. Close the page, do not click links, and if you already submitted data, change passwords from a different device and contact your bank.`
+        ? 'Do not enter credentials or payment details; close the page and change passwords if you already submitted data.'
         : verdict === 'Suspicious'
-            ? `Do not use this ${targetLabel} until you confirm it through the official app or website you normally use—type the address yourself instead of following the link.`
-            : `You may proceed with normal caution, but always confirm the address bar and sender before sharing sensitive information.`)
-
-    return `Taken together, the evidence supports a ${verdict.toLowerCase()} rating with an overall risk score of ${riskScore} out of 100. ${advice}`
+            ? 'Avoid this link until you confirm through the official website or app you normally use.'
+            : 'Proceed with ordinary caution and double-check the address before sharing sensitive information.')
+    return `Overall this ${targetLabel} is rated ${verdict} with a risk score of ${riskScore} out of 100. ${advice}`
 }
 
 export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targetLabel, maxRules = 13, targetId = '' }) {
-    const ruleAssessments = buildRuleAssessments(gemini?.rule_assessments, rules.rule_evaluations, maxRules)
-    const matchedRules = ruleAssessments.filter(r => r.fits && r.rule_id !== maxRules)
-    const clearedRules = ruleAssessments.filter(r => !r.fits)
+    const ruleAssessments = buildRuleAssessments(
+        gemini?.rule_assessments,
+        rules.rule_evaluations,
+        maxRules
+    )
+
+    const matchedRules = ruleAssessments.filter(r => r.fits)
 
     const verdict = pickVerdict(gemini?.verdict, rules.verdict, ml?.verdict)
     let risk_score = Math.min(100, Math.round(
@@ -131,37 +131,42 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
 
     let hostname = targetId
     try {
-        if (targetLabel === 'website' && targetId) hostname = new URL(targetId.startsWith('http') ? targetId : `https://${targetId}`).hostname
-    } catch { /* keep raw */ }
+        if (targetLabel === 'website' && targetId) {
+            hostname = new URL(targetId.startsWith('http') ? targetId : `https://${targetId}`).hostname
+        }
+    } catch { /* keep */ }
 
-    // Use Gemini paragraphs if provided (3–4), else build locally
-    let paragraphs = []
-    if (Array.isArray(gemini?.evidence_paragraphs) && gemini.evidence_paragraphs.length >= 3) {
-        paragraphs = gemini.evidence_paragraphs.map(clean).filter(p => p.length > 40).slice(0, 4)
-    }
+    const opening_paragraph = clean(
+        gemini?.opening_paragraph ||
+        (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[0] : '') ||
+        buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matchedRules)
+    )
 
-    if (paragraphs.length < 3) {
-        paragraphs = [
-            buildParagraph1(verdict, targetLabel, targetId || 'this target', liveIntel, matchedRules),
-            buildParagraph2(targetLabel, matchedRules, clearedRules),
-            buildParagraph3(targetLabel, gemini, rules, ml, hostname),
-            buildParagraph4(verdict, targetLabel, gemini?.action || rules.action, risk_score)
-        ]
-    } else if (paragraphs.length === 3) {
-        paragraphs.push(buildParagraph4(verdict, targetLabel, gemini?.action || rules.action, risk_score))
-    }
+    const content_paragraph = clean(
+        gemini?.content_paragraph ||
+        (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[2] : '') ||
+        buildFallbackContent(targetLabel, gemini, rules, hostname)
+    )
 
-    const threat_analysis = paragraphs.join('\n\n')
+    const conclusion_paragraph = clean(
+        gemini?.conclusion_paragraph ||
+        (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[3] : '') ||
+        buildFallbackConclusion(verdict, targetLabel, risk_score, gemini?.action || rules.action)
+    )
+
+    const threat_analysis = [opening_paragraph, content_paragraph, conclusion_paragraph].join('\n\n')
 
     return {
+        opening_paragraph,
+        content_paragraph,
+        conclusion_paragraph,
+        rule_assessments: ruleAssessments,
         threat_analysis,
-        analysis_paragraphs: paragraphs,
         verdict,
         risk_score,
-        rule_assessments: ruleAssessments,
         rules_triggered: matchedRules.map(r => r.rule_id),
         action: clean(gemini?.action || rules.action),
-        analysis_mode: 'unified-v3'
+        analysis_mode: 'unified-v4'
     }
 }
 
