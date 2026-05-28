@@ -10,7 +10,7 @@ import ThreatAnalysisReport from './ThreatAnalysisReport'
 const getHistory = () => JSON.parse(localStorage.getItem('scan_history') || '[]')
 const saveHistory = (newItem) => {
     const current = getHistory()
-    const updated = [newItem, ...current].slice(0, 50)
+    const updated = [newItem, ...current].slice(0, 500)
     localStorage.setItem('scan_history', JSON.stringify(updated))
     return updated
 }
@@ -74,6 +74,20 @@ function App() {
             localStorage.setItem('threatlens_users', JSON.stringify(users))
         }
 
+        // Clear stale cached reports from old scoring formula (one-time migration)
+        const cacheVersion = localStorage.getItem('threatlens_cache_version')
+        if (cacheVersion !== 'v3-file-protocol-fix') {
+            const keysToRemove = []
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i)
+                if (key && key.startsWith('threat_cache_')) {
+                    keysToRemove.push(key)
+                }
+            }
+            keysToRemove.forEach(k => localStorage.removeItem(k))
+            localStorage.setItem('threatlens_cache_version', 'v3-file-protocol-fix')
+        }
+
         const currentUser = localStorage.getItem('threatlens_current_user')
         if (currentUser) {
             setUser(JSON.parse(currentUser))
@@ -118,48 +132,55 @@ function App() {
         }
     }, [emailStatus, emailAnalysisPhase])
 
+    // Store pending URL params and process only after login
+    const [pendingParams, setPendingParams] = useState(null)
+
     useEffect(() => {
         const params = new URLSearchParams(window.location.search)
         const typeParam = params.get('type')
+        const urlParam = params.get('url')
+        const textParam = params.get('text')
+        const senderParam = params.get('sender') || ''
+        const subjectParam = params.get('subject') || ''
+        const bodyParam = params.get('body') || ''
 
-        if (typeParam === 'website') {
-            const urlParam = params.get('url')
-            const textParam = params.get('text')
-            if (urlParam) {
-                setView('dashboard')
-                setUrl(urlParam)
-                setStatus('analyzing')
-                runAnalysis(urlParam, textParam)
-            }
+        // Always clean the URL
+        if (typeParam || urlParam) {
             window.history.replaceState({}, document.title, "/")
+        }
+
+        // Store params for processing after login
+        if (typeParam === 'website' && urlParam) {
+            setPendingParams({ type: 'website', url: urlParam, text: textParam })
         } else if (typeParam === 'email') {
-            const senderParam = params.get('sender') || ''
-            const subjectParam = params.get('subject') || ''
-            const bodyParam = params.get('body') || ''
-
-            setView('email')
-            setEmailSender(senderParam)
-            setEmailSubject(subjectParam)
-            setEmailBody(bodyParam)
-
-            if (senderParam || subjectParam || bodyParam) {
-                setTimeout(() => {
-                    runEmailAnalysis(senderParam, subjectParam, bodyParam)
-                }, 100)
-            }
-            window.history.replaceState({}, document.title, "/")
-        } else {
-            const urlParam = params.get('url')
-            const textParam = params.get('text')
-            if (urlParam) {
-                setView('dashboard')
-                setUrl(urlParam)
-                setStatus('analyzing')
-                runAnalysis(urlParam, textParam)
-                window.history.replaceState({}, document.title, "/")
-            }
+            setPendingParams({ type: 'email', sender: senderParam, subject: subjectParam, body: bodyParam })
+        } else if (urlParam) {
+            setPendingParams({ type: 'website', url: urlParam, text: textParam })
         }
     }, [])
+
+    // Process pending params only after user is authenticated
+    useEffect(() => {
+        if (!user || !pendingParams) return
+
+        if (pendingParams.type === 'website') {
+            setView('dashboard')
+            setUrl(pendingParams.url)
+            setStatus('analyzing')
+            runAnalysis(pendingParams.url, pendingParams.text)
+        } else if (pendingParams.type === 'email') {
+            setView('email')
+            setEmailSender(pendingParams.sender)
+            setEmailSubject(pendingParams.subject)
+            setEmailBody(pendingParams.body)
+            if (pendingParams.sender || pendingParams.subject || pendingParams.body) {
+                setTimeout(() => {
+                    runEmailAnalysis(pendingParams.sender, pendingParams.subject, pendingParams.body)
+                }, 100)
+            }
+        }
+        setPendingParams(null)
+    }, [user, pendingParams])
 
 
     const callGeminiLLM = async (prompt, retryCount = 0) => {

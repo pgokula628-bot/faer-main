@@ -20,7 +20,11 @@ export function analyzeWebsite(targetUrl, targetText) {
     let hostname = '', protocol = ''
 
     try {
-        const u = new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`)
+        let normalizedUrl = targetUrl
+        if (!targetUrl.startsWith('http') && !targetUrl.startsWith('file:')) {
+            normalizedUrl = `https://${targetUrl}`
+        }
+        const u = new URL(normalizedUrl)
         hostname = u.hostname
         protocol = u.protocol
     } catch { hostname = targetUrl }
@@ -28,10 +32,11 @@ export function analyzeWebsite(targetUrl, targetText) {
     const isTrusted = TRUSTED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))
     const domainBase = hostname.replace(/\.[^.]+$/, '')
 
-    // 1 HTTP vs HTTPS
-    const r1 = protocol === 'http:' && !hostname.includes('localhost')
-    if (r1) { score += 15; findings.push({ type: 'Rule 1', value: 'HTTP — no encryption' }) }
-    ruleEvaluations.push(ruleEval(1, 'HTTP vs HTTPS', r1, 'Uses HTTP; data not encrypted (+15)', 'Uses HTTPS or excluded localhost', 15))
+    // 1 HTTP vs HTTPS (also flag file:// and localhost as insecure)
+    const isInsecureProtocol = protocol === 'http:' || protocol === 'file:' || hostname.includes('localhost') || hostname === '127.0.0.1'
+    const r1 = isInsecureProtocol && protocol !== 'https:'
+    if (r1) { score += 15; findings.push({ type: 'Rule 1', value: protocol === 'file:' ? 'file:// protocol — local file, no server encryption' : 'HTTP/localhost — no encryption' }) }
+    ruleEvaluations.push(ruleEval(1, 'HTTP vs HTTPS', r1, protocol === 'file:' ? 'Local file (file://) with no server encryption (+15)' : 'Uses HTTP or localhost; data not encrypted (+15)', 'Uses HTTPS — encrypted connection', 15))
 
     // 2 IP as domain
     const r2 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
@@ -65,27 +70,27 @@ export function analyzeWebsite(targetUrl, targetText) {
     // 7 Urgency language
     const urg = URGENCY_WORDS.filter(w => content.includes(w))
     const r7 = urg.length >= 1
-    if (urg.length >= 3) { score += 20; findings.push({ type: 'Rule 7', value: urg.slice(0, 3).join(', ') }) }
-    else if (r7) { score += 8; findings.push({ type: 'Rule 7', value: urg[0] }) }
-    ruleEvaluations.push(ruleEval(7, 'Urgency Language', r7, `${urg.length} urgency phrase(s) (+${urg.length >= 3 ? 20 : 8})`, 'No urgency triggers', urg.length >= 3 ? 20 : 8))
+    if (urg.length >= 3) { score += 25; findings.push({ type: 'Rule 7', value: urg.slice(0, 3).join(', ') }) }
+    else if (r7) { score += 12; findings.push({ type: 'Rule 7', value: urg[0] }) }
+    ruleEvaluations.push(ruleEval(7, 'Urgency Language', r7, `${urg.length} urgency phrase(s) (+${urg.length >= 3 ? 25 : 12})`, 'No urgency triggers', urg.length >= 3 ? 25 : 12))
 
     // 8 Sensitive data
     const sens = SENSITIVE_WORDS.filter(w => content.includes(w))
     const r8 = sens.length >= 1
-    if (sens.length >= 2) { score += 25; findings.push({ type: 'Rule 8', value: sens.slice(0, 3).join(', ') }) }
-    else if (r8) { score += 10; findings.push({ type: 'Rule 8', value: sens[0] }) }
-    ruleEvaluations.push(ruleEval(8, 'Sensitive Data Request', r8, `${sens.length} sensitive term(s) (+${sens.length >= 2 ? 25 : 10})`, 'No sensitive data language', sens.length >= 2 ? 25 : 10))
+    if (sens.length >= 2) { score += 30; findings.push({ type: 'Rule 8', value: sens.slice(0, 3).join(', ') }) }
+    else if (r8) { score += 15; findings.push({ type: 'Rule 8', value: sens[0] }) }
+    ruleEvaluations.push(ruleEval(8, 'Sensitive Data Request', r8, `${sens.length} sensitive term(s) (+${sens.length >= 2 ? 30 : 15})`, 'No sensitive data language', sens.length >= 2 ? 30 : 15))
 
     // 9 Login form untrusted
     const r9 = content.includes('password') && (content.includes('login') || content.includes('sign in')) && !isTrusted
-    if (r9) { score += 15; findings.push({ type: 'Rule 9', value: 'Login form on untrusted domain' }) }
-    ruleEvaluations.push(ruleEval(9, 'Login Form Untrusted', r9, 'Password/login form on non-trusted site (+15)', isTrusted ? 'Trusted site login' : 'No login form signals', 15))
+    if (r9) { score += 20; findings.push({ type: 'Rule 9', value: 'Login form on untrusted domain' }) }
+    ruleEvaluations.push(ruleEval(9, 'Login Form Untrusted', r9, 'Password/login form on non-trusted site (+20)', isTrusted ? 'Trusted site login' : 'No login form signals', 20))
 
     // 10 Brand mismatch
     const brands = BRAND_KEYWORDS.filter(b => content.includes(b) && !hostname.includes(b))
     const r10 = brands.length >= 2 && !isTrusted
-    if (r10) { score += 12; findings.push({ type: 'Rule 10', value: brands.slice(0, 3).join(', ') }) }
-    ruleEvaluations.push(ruleEval(10, 'Brand Mismatch', r10, `Content brands (${brands.slice(0, 2).join(', ')}) ≠ domain (+12)`, 'Brands align or <2 mentions', 12))
+    if (r10) { score += 18; findings.push({ type: 'Rule 10', value: brands.slice(0, 3).join(', ') }) }
+    ruleEvaluations.push(ruleEval(10, 'Brand Mismatch', r10, `Content brands (${brands.slice(0, 2).join(', ')}) ≠ domain (+18)`, 'Brands align or <2 mentions', 18))
 
     // 11 Suspicious links in page
     const links = content.match(/https?:\/\/[^\s"'<>]+/gi) || []
@@ -108,6 +113,10 @@ export function analyzeWebsite(targetUrl, targetText) {
     const r13 = isTrusted
     if (r13) score = Math.max(0, score - 40)
     ruleEvaluations.push(ruleEval(13, 'Trusted Domain Whitelist', r13, `"${hostname}" trusted (−40 risk)`, `"${hostname}" not on whitelist`, -40))
+
+    // Combo bonus: when 3+ content-based rules (7, 8, 9, 10) all fire, add +15 bonus
+    const contentRulesFired = [r7, r8, r9, r10].filter(Boolean).length
+    if (contentRulesFired >= 3) { score += 15; findings.push({ type: 'Combo', value: `${contentRulesFired} content rules triggered together (+15)` }) }
 
     score = Math.min(100, Math.max(0, score))
     const triggered = ruleEvaluations.filter(r => r.applies && r.rule_id !== 13).length

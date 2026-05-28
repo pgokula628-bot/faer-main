@@ -1,3 +1,5 @@
 {
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "workbench.externalBrowser": "edge",
+    "workbench.browser.openLocalhostLinks": false
 }

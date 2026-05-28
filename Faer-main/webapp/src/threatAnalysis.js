@@ -121,12 +121,44 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
     const matchedRules = ruleAssessments.filter(r => r.fits)
 
     const verdict = pickVerdict(gemini?.verdict, rules.verdict, ml?.verdict)
-    let risk_score = Math.min(100, Math.round(
-        (gemini?.risk_score || 0) * 0.45 +
-        (rules.risk_score || 0) * 0.35 +
-        (ml?.risk_score || 0) * 0.2 +
-        (liveIntel?.risk_boost || 0)
-    ))
+
+    // Dynamic weighting: only count sources that actually produced a score
+    const hasGemini = gemini && typeof gemini.risk_score === 'number' && gemini.risk_score > 0
+    const hasMl = ml && typeof ml.risk_score === 'number' && ml.risk_score > 0
+    const hasRules = rules && typeof rules.risk_score === 'number'
+
+    let risk_score
+    if (hasGemini && hasMl && hasRules) {
+        // All three sources available — use original weights
+        risk_score = Math.round(
+            gemini.risk_score * 0.45 +
+            rules.risk_score * 0.35 +
+            ml.risk_score * 0.20 +
+            (liveIntel?.risk_boost || 0)
+        )
+    } else if (hasGemini && hasRules) {
+        // Gemini + Rules only
+        risk_score = Math.round(
+            gemini.risk_score * 0.55 +
+            rules.risk_score * 0.45 +
+            (liveIntel?.risk_boost || 0)
+        )
+    } else if (hasMl && hasRules) {
+        // ML + Rules only
+        risk_score = Math.round(
+            rules.risk_score * 0.70 +
+            ml.risk_score * 0.30 +
+            (liveIntel?.risk_boost || 0)
+        )
+    } else {
+        // Rules only — use full rule engine score without dilution
+        risk_score = Math.round(
+            (rules.risk_score || 0) +
+            (liveIntel?.risk_boost || 0)
+        )
+    }
+
+    risk_score = Math.min(100, Math.max(0, risk_score))
     if (liveIntel?.any_threat) risk_score = Math.max(risk_score, 70)
 
     let hostname = targetId
