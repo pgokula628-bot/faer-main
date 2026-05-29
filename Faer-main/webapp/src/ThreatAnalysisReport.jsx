@@ -24,7 +24,7 @@ export default function ThreatAnalysisReport({ report }) {
                             <div key={`fit-${r.rule_id}`} className="rule-line rule-fits">
                                 <span className="rule-line-badge">Fits</span>
                                 <span className="rule-line-text">
-                                    <strong>Rule {r.rule_id} — {r.rule_name}.</strong> {r.evidence}
+                                    <strong>{r.rule_id === 'LIVE' ? '' : `Rule ${r.rule_id} — `}{r.rule_name}.</strong> {r.evidence}
                                 </span>
                             </div>
                         ))}
@@ -32,7 +32,7 @@ export default function ThreatAnalysisReport({ report }) {
                             <div key={`clear-${r.rule_id}`} className="rule-line rule-not-fits">
                                 <span className="rule-line-badge">Does not fit</span>
                                 <span className="rule-line-text">
-                                    <strong>Rule {r.rule_id} — {r.rule_name}.</strong> {r.evidence}
+                                    <strong>{r.rule_id === 'LIVE' ? '' : `Rule ${r.rule_id} — `}{r.rule_name}.</strong> {r.evidence}
                                 </span>
                             </div>
                         ))}

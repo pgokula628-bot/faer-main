@@ -7,7 +7,12 @@ import { buildUnifiedThreatAnalysis, mergeFullReport } from './threatAnalysis'
 import { fetchLiveThreatIntel, extractUrlsFromText } from './chromeThreatIntel'
 import ThreatAnalysisReport from './ThreatAnalysisReport'
 
-const getHistory = () => JSON.parse(localStorage.getItem('scan_history') || '[]')
+const getHistory = () => {
+    try {
+        const parsed = JSON.parse(localStorage.getItem('scan_history') || '[]')
+        return Array.isArray(parsed) ? parsed : []
+    } catch { return [] }
+}
 const saveHistory = (newItem) => {
     const current = getHistory()
     const updated = [newItem, ...current].slice(0, 500)
@@ -59,7 +64,12 @@ function App() {
 
     // Check for existing session and ensure demo user exists
     useEffect(() => {
-        const users = JSON.parse(localStorage.getItem('threatlens_users') || '[]')
+        let users = []
+        try {
+            users = JSON.parse(localStorage.getItem('threatlens_users') || '[]')
+            if (!Array.isArray(users)) users = []
+        } catch { users = [] }
+
         const demoExists = users.find(u => u.email === 'demo@threatlens.ai')
 
         if (!demoExists) {
@@ -90,7 +100,11 @@ function App() {
 
         const currentUser = localStorage.getItem('threatlens_current_user')
         if (currentUser) {
-            setUser(JSON.parse(currentUser))
+            try {
+                setUser(JSON.parse(currentUser))
+            } catch {
+                localStorage.removeItem('threatlens_current_user')
+            }
         }
     }, [])
 
@@ -347,7 +361,7 @@ Return ONLY valid JSON:
 
             setAnalysisPhase('ml')
             await new Promise(r => setTimeout(r, 300))
-            let ml = { verdict: 'Safe', risk_score: 0, risk_factors: [], why_suspicious: '', feature_snapshot: {} }
+            let ml = null
             try {
                 const mlResponse = await fetch('http://localhost:5000/api/analyze/url', {
                     method: 'POST',
@@ -417,7 +431,7 @@ Return ONLY valid JSON:
 
             setEmailAnalysisPhase('ml')
             await new Promise(r => setTimeout(r, 300))
-            let ml = { verdict: 'Safe', risk_score: 0, risk_factors: [], why_suspicious: '', feature_snapshot: {} }
+            let ml = null
             try {
                 const mlResponse = await fetch('http://localhost:5000/api/analyze/email', {
                     method: 'POST',
@@ -434,6 +448,7 @@ Return ONLY valid JSON:
             const finalReport = finalizeEmailReport(useSender, gemini, rules, ml, liveIntel)
             setCachedReport('email', useSender, useSubject + '||' + useBody, finalReport)
             setEmailReport(finalReport)
+            setHistory(saveHistory(finalReport))
             setEmailAnalysisPhase('done')
             setEmailStatus('success')
         } catch (err) {
@@ -482,8 +497,8 @@ Return ONLY valid JSON:
 
     const stats = {
         total: history.length,
-        safe: history.filter(h => h.verdict === 'Safe').length,
-        threats: history.filter(h => h.verdict !== 'Safe').length
+        safe: history.filter(h => h?.verdict === 'Safe').length,
+        threats: history.filter(h => h?.verdict && h.verdict !== 'Safe').length
     }
 
     return (
@@ -747,7 +762,7 @@ Return ONLY valid JSON:
                                                         return `${ratio}%`;
                                                     })()}
                                                 </text>
-                                                <text x="100" y="85" textAnchor="middle" fill="var(--text-tertiary)" fontSize="8" fontWeight="600" textTransform="uppercase" letterSpacing="0.8" fontFamily="Inter">
+                                                <text x="100" y="85" textAnchor="middle" fill="var(--text-tertiary)" fontSize="8" fontWeight="600" style={{ textTransform: 'uppercase' }} letterSpacing="0.8" fontFamily="Inter">
                                                     Safe Ratio
                                                 </text>
                                                 
@@ -770,7 +785,9 @@ Return ONLY valid JSON:
                                                 <Globe size={14} />
                                             </div>
                                             <div className="activity-details">
-                                                <div className="activity-domain">{new URL(h.url).hostname}</div>
+                                                <div className="activity-domain">
+  {h.url ? new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname : 'Unknown'}
+</div>
                                                 <div className="activity-time">{new Date(h.timestamp).toLocaleTimeString()}</div>
                                             </div>
                                             <div className={`activity-badge ${h.verdict.toLowerCase()}`}>
@@ -805,13 +822,17 @@ Return ONLY valid JSON:
                                     <div
                                         key={i}
                                         className="history-card"
-                                        onClick={() => { setReport(h); setStatus('success'); setView('dashboard'); }}
+                                        onClick={() => { setReport(h); setStatus('success'); setView(h.url ? 'dashboard' : 'email'); }}
                                     >
                                         <div className="card-header">
-                                            <div className={`status-dot ${h.verdict.toLowerCase()}`}></div>
-                                            <span className="card-domain">{new URL(h.url).hostname}</span>
+                                            <div className={`status-dot ${(h?.verdict || 'safe').toLowerCase()}`}></div>
+                                            <span className="card-domain">
+                                                {h?.url ? (
+                                                    (() => { try { return new URL(h.url).hostname } catch { return h.url } })()
+                                                ) : 'Email Scan'}
+                                            </span>
                                         </div>
-                                        <div className="card-summary">{h.summary}</div>
+                                        <div className="card-summary">{h?.summary || 'Analysis Complete'}</div>
                                         <div className="card-footer">
                                             <span className="card-time">{new Date(h.timestamp).toLocaleString()}</span>
                                             <span className="card-score">Risk: {h.risk_score}/100</span>

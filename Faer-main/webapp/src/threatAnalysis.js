@@ -118,14 +118,23 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
         maxRules
     )
 
+    if (liveIntel?.any_threat) {
+        ruleAssessments.unshift({
+            rule_id: 'LIVE',
+            rule_name: 'Live Blocklist Threat Detected (+70)',
+            fits: true,
+            evidence: clean(liveIntel.summary)
+        })
+    }
+
     const matchedRules = ruleAssessments.filter(r => r.fits)
 
     const verdict = pickVerdict(gemini?.verdict, rules.verdict, ml?.verdict)
 
-    // Dynamic weighting: only count sources that actually produced a score
-    const hasGemini = gemini && typeof gemini.risk_score === 'number' && gemini.risk_score > 0
-    const hasMl = ml && typeof ml.risk_score === 'number' && ml.risk_score > 0
-    const hasRules = rules && typeof rules.risk_score === 'number'
+    // Dynamic weighting: only count sources that actually returned a response
+    const hasGemini = gemini !== null && typeof gemini.risk_score === 'number'
+    const hasMl = ml !== null && typeof ml.risk_score === 'number'
+    const hasRules = rules !== null && typeof rules.risk_score === 'number'
 
     let risk_score
     if (hasGemini && hasMl && hasRules) {
@@ -160,6 +169,9 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
 
     risk_score = Math.min(100, Math.max(0, risk_score))
     if (liveIntel?.any_threat) risk_score = Math.max(risk_score, 70)
+    
+    // Derive consensus verdict purely from the weighted score
+    const consensus_verdict = risk_score >= 60 ? 'Dangerous' : risk_score >= 30 ? 'Suspicious' : 'Safe'
 
     let hostname = targetId
     try {
@@ -171,7 +183,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
     const opening_paragraph = clean(
         gemini?.opening_paragraph ||
         (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[0] : '') ||
-        buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matchedRules)
+        buildFallbackOpening(consensus_verdict, targetLabel, targetId, liveIntel, matchedRules)
     )
 
     const content_paragraph = clean(
@@ -183,7 +195,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
     const conclusion_paragraph = clean(
         gemini?.conclusion_paragraph ||
         (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[3] : '') ||
-        buildFallbackConclusion(verdict, targetLabel, risk_score, gemini?.action || rules.action)
+        buildFallbackConclusion(consensus_verdict, targetLabel, risk_score, gemini?.action || rules.action)
     )
 
     const threat_analysis = [opening_paragraph, content_paragraph, conclusion_paragraph].join('\n\n')
@@ -194,7 +206,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
         conclusion_paragraph,
         rule_assessments: ruleAssessments,
         threat_analysis,
-        verdict,
+        verdict: consensus_verdict,
         risk_score,
         rules_triggered: matchedRules.map(r => r.rule_id),
         action: clean(gemini?.action || rules.action),

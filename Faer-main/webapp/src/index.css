@@ -400,7 +400,6 @@ h1, h2, h3, h4, h5, h6 {
   align-items: flex-start;
   padding-bottom: var(--space-6);
   margin-bottom: var(--space-6);
-  border-bottom: 1px solid var(--border-primary);
 }
 
 .verdict-chip {
