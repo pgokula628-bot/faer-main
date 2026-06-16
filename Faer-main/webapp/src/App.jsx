@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Shield, Clock, LayoutDashboard, Terminal, AlertTriangle, Zap, Globe, ChevronRight, Activity, LogOut, User, Menu, X, Mail, Send, Inbox, AlertCircle, CheckCircle } from 'lucide-react'
+import { Shield, Clock, LayoutDashboard, Terminal, AlertTriangle, Zap, Globe, ChevronRight, Activity, LogOut, User, Menu, X, Mail, Send, Inbox, AlertCircle, CheckCircle, MessageSquare } from 'lucide-react'
 import Login from './Login'
 import Register from './Register'
-import { analyzeWebsite, analyzeEmail } from './ruleEngine'
+import { analyzeWebsite, analyzeEmail, analyzeChat } from './ruleEngine'
 import { buildUnifiedThreatAnalysis, mergeFullReport } from './threatAnalysis'
 import { fetchLiveThreatIntel, extractUrlsFromText } from './chromeThreatIntel'
 import ThreatAnalysisReport from './ThreatAnalysisReport'
@@ -62,6 +62,14 @@ function App() {
     const [emailReport, setEmailReport] = useState(null)
     const [emailLoadingMsg, setEmailLoadingMsg] = useState('Initializing Email Scanner...')
 
+    // Chat Scanner State
+    const [chatPlatform, setChatPlatform] = useState('whatsapp')
+    const [chatSender, setChatSender] = useState('')
+    const [chatMessage, setChatMessage] = useState('')
+    const [chatStatus, setChatStatus] = useState('idle')
+    const [chatReport, setChatReport] = useState(null)
+    const [chatLoadingMsg, setChatLoadingMsg] = useState('Initializing Chat Scanner...')
+
     // Check for existing session and ensure demo user exists
     useEffect(() => {
         let users = []
@@ -111,6 +119,7 @@ function App() {
     // Analysis phase tracking
     const [analysisPhase, setAnalysisPhase] = useState('idle') // idle, gemini, rules, ml, done
     const [emailAnalysisPhase, setEmailAnalysisPhase] = useState('idle')
+    const [chatAnalysisPhase, setChatAnalysisPhase] = useState('idle')
 
     useEffect(() => {
         if (status === 'analyzing') {
@@ -146,6 +155,24 @@ function App() {
         }
     }, [emailStatus, emailAnalysisPhase])
 
+    useEffect(() => {
+        if (chatStatus === 'analyzing') {
+            const msgs = {
+                live: ["Checking links against live blocklists...", "Verifying phone number reputation...", "Loading active threat feeds..."],
+                gemini: ["Running deep chat analysis...", "Evaluating social engineering tactics...", "Building detailed evidence..."],
+                rules: ["Applying strict phone number validation...", "Checking for crypto and investment scams...", "Scanning for urgency triggers..."],
+                ml: ["Scoring message risk profile...", "Correlating live threat data...", "Finalizing assessment..."],
+                ocr: ["Extracting text from screenshot...", "Running optical character recognition...", "Parsing chat transcript..."]
+            }[chatAnalysisPhase] || ["Initializing chat scan..."]
+            let i = 0
+            const interval = setInterval(() => {
+                setChatLoadingMsg(msgs[i % msgs.length])
+                i++
+            }, 600)
+            return () => clearInterval(interval)
+        }
+    }, [chatStatus, chatAnalysisPhase])
+
     // Store pending URL params and process only after login
     const [pendingParams, setPendingParams] = useState(null)
 
@@ -157,6 +184,7 @@ function App() {
         const senderParam = params.get('sender') || ''
         const subjectParam = params.get('subject') || ''
         const bodyParam = params.get('body') || ''
+        const messageParam = params.get('message') || ''
 
         // Always clean the URL
         if (typeParam || urlParam) {
@@ -168,6 +196,8 @@ function App() {
             setPendingParams({ type: 'website', url: urlParam, text: textParam })
         } else if (typeParam === 'email') {
             setPendingParams({ type: 'email', sender: senderParam, subject: subjectParam, body: bodyParam })
+        } else if (typeParam === 'chat') {
+            setPendingParams({ type: 'chat', sender: senderParam, message: messageParam })
         } else if (urlParam) {
             setPendingParams({ type: 'website', url: urlParam, text: textParam })
         }
@@ -190,6 +220,15 @@ function App() {
             if (pendingParams.sender || pendingParams.subject || pendingParams.body) {
                 setTimeout(() => {
                     runEmailAnalysis(pendingParams.sender, pendingParams.subject, pendingParams.body)
+                }, 100)
+            }
+        } else if (pendingParams.type === 'chat') {
+            setView('chat')
+            setChatSender(pendingParams.sender)
+            setChatMessage(pendingParams.message)
+            if (pendingParams.sender || pendingParams.message) {
+                setTimeout(() => {
+                    runChatAnalysis(pendingParams.sender, pendingParams.message)
                 }, 100)
             }
         }
@@ -305,6 +344,35 @@ Return ONLY valid JSON:
 }`
     }
 
+    const buildChatGeminiPrompt = (sender, message, ruleResult, liveIntel) => {
+        const rulesSummary = JSON.stringify(ruleResult.rule_evaluations || [])
+        return `You are a senior cybersecurity analyst. Write ONLY factual findings—never mention AI, machine learning, APIs, models, or software tools.
+
+Sender/Phone Number: ${sender}
+Chat Message: ${message.substring(0, 5000)}
+Live blocklist on links: ${liveIntel?.summary || 'unavailable'}
+Security rule results: ${rulesSummary}
+
+Provide three text fields (no tool names):
+1) "opening_paragraph": 8–10 sentences. Start with "This chat message is suspicious because" OR "This chat message appears safe because". Quote sender, blocklist, main threats.
+2) "content_paragraph": exactly 4 sentences on chat wording, links, urgency, investment/crypto fraud, credential requests.
+3) "conclusion_paragraph": 3–5 sentences with final advice.
+
+Return "rule_assessments" for ALL 6 rules with fits and evidence.
+
+Return ONLY valid JSON:
+{
+  "verdict": "Safe" | "Suspicious" | "Dangerous",
+  "risk_score": 0-100,
+  "summary": "short headline",
+  "opening_paragraph": "8-10 sentences...",
+  "content_paragraph": "4 sentences...",
+  "conclusion_paragraph": "3-5 sentences...",
+  "rule_assessments": [{"rule_id": 1, "rule_name": "Sender Number Format", "fits": false, "evidence": "..."}],
+  "action": "short advice"
+}`
+    }
+
     const finalizeWebsiteReport = (targetUrl, targetText, gemini, rules, ml, liveIntel) => {
         const unified = buildUnifiedThreatAnalysis({
             gemini, rules, ml, liveIntel, targetLabel: 'website', maxRules: 13, targetId: targetUrl
@@ -321,6 +389,17 @@ Return ONLY valid JSON:
     const finalizeEmailReport = (sender, gemini, rules, ml, liveIntel) => {
         const unified = buildUnifiedThreatAnalysis({
             gemini, rules, ml, liveIntel, targetLabel: 'email', maxRules: 14, targetId: sender
+        })
+        return mergeFullReport({
+            ...rules,
+            summary: gemini?.summary || rules.summary,
+            action: gemini?.action || rules.action
+        }, unified)
+    }
+
+    const finalizeChatReport = (sender, gemini, rules, ml, liveIntel) => {
+        const unified = buildUnifiedThreatAnalysis({
+            gemini, rules, ml, liveIntel, targetLabel: 'chat message', maxRules: 6, targetId: sender
         })
         return mergeFullReport({
             ...rules,
@@ -472,6 +551,81 @@ Return ONLY valid JSON:
         runEmailAnalysis()
     }
 
+    const runChatAnalysis = async (directSender, directMessage) => {
+        const useSender = directSender !== undefined ? directSender : chatSender
+        const useMessage = directMessage !== undefined ? directMessage : chatMessage
+
+        setChatStatus('analyzing')
+        setChatAnalysisPhase('live')
+
+        const cached = getCachedReport('chat', useSender, useMessage)
+        if (cached?.analysis_mode === 'unified-v4') {
+            setChatReport(cached)
+            setChatAnalysisPhase('done')
+            setChatStatus('success')
+            return
+        }
+
+        try {
+            const linkUrls = extractUrlsFromText(useMessage)
+            const liveIntel = await fetchLiveThreatIntel(linkUrls[0] || '', linkUrls)
+
+            setChatAnalysisPhase('gemini')
+            let gemini = null
+            try {
+                const rulesPreview = analyzeChat(useSender, useMessage)
+                gemini = await callGeminiLLM(buildChatGeminiPrompt(useSender, useMessage, rulesPreview, liveIntel))
+            } catch (e) {
+                console.warn('Analysis API skipped:', e.message)
+            }
+
+            setChatAnalysisPhase('rules')
+            await new Promise(r => setTimeout(r, 300))
+            const rules = analyzeChat(useSender, useMessage)
+
+            setChatAnalysisPhase('ml')
+            await new Promise(r => setTimeout(r, 300))
+            let ml = null
+            try {
+                const mlResponse = await fetch('http://localhost:5000/api/analyze/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender: useSender, message: useMessage, liveIntel })
+                })
+                if (mlResponse.ok) {
+                    ml = await mlResponse.json()
+                }
+            } catch (e) {
+                console.error('Python ML Backend disconnected or errored:', e)
+            }
+
+            const finalReport = finalizeChatReport(useSender, gemini, rules, ml, liveIntel)
+            setCachedReport('chat', useSender, useMessage, finalReport)
+            setChatReport(finalReport)
+            setHistory(saveHistory(finalReport))
+            setChatAnalysisPhase('done')
+            setChatStatus('success')
+        } catch (err) {
+            console.error(err)
+            setChatReport({
+                verdict: 'Error',
+                risk_score: 0,
+                summary: 'Analysis Error',
+                threat_analysis: err.message,
+                action: 'Please try again.',
+                indicators: []
+            })
+            setChatStatus('error')
+            setChatAnalysisPhase('idle')
+        }
+    }
+
+    const handleChatScan = (e) => {
+        e.preventDefault()
+        if (!chatSender.trim() && !chatMessage.trim()) return
+        runChatAnalysis()
+    }
+
     const handleLogin = (userData) => {
         setUser(userData)
     }
@@ -500,6 +654,193 @@ Return ONLY valid JSON:
         safe: history.filter(h => h?.verdict === 'Safe').length,
         threats: history.filter(h => h?.verdict && h.verdict !== 'Safe').length
     }
+
+    const renderTelemetry = (activeReport) => (
+        <div className="cyber-telemetry-container">
+            {activeReport && activeReport.components ? (
+                <>
+                    <div className="telemetry-card cyber-corners">
+                        <div className="telemetry-card-title">
+                            <Activity size={14} />
+                            <span>Threat Engine Analysis</span>
+                        </div>
+                        <div className="telemetry-svg-wrap">
+                            <svg viewBox="0 0 350 150" width="100%" height="100%">
+                                <defs>
+                                    <filter id="cyber-glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
+                                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                    </filter>
+                                </defs>
+                                <line x1="40" y1="30" x2="330" y2="30" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+                                <line x1="40" y1="60" x2="330" y2="60" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+                                <line x1="40" y1="90" x2="330" y2="90" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+                                <line x1="40" y1="120" x2="330" y2="120" stroke="rgba(0, 210, 255, 0.2)" strokeWidth="1.5" />
+                                
+                                {(() => {
+                                    const engines = [
+                                        { name: 'Rules', score: activeReport.components.rules },
+                                        { name: 'ML', score: activeReport.components.ml },
+                                        { name: 'Open Source AI', score: activeReport.components.gemini },
+                                        { name: 'Live Intel', score: activeReport.components.live }
+                                    ]
+                                    return engines.map((eng, i) => {
+                                        const x = 75 + (i * 70)
+                                        const h = Math.max(1, (eng.score / 100) * 80)
+                                        const y = 120 - h
+                                        return (
+                                            <g key={eng.name}>
+                                                <rect x={x - 12} y={y} width="24" height={h} fill="var(--accent-primary)" opacity="0.6" filter="url(#cyber-glow-cyan)" />
+                                                <rect x={x - 12} y={y} width="24" height={h} fill="var(--accent-primary)" />
+                                                <text x={x} y="138" textAnchor="middle" fill="var(--text-tertiary)" fontSize="10" fontFamily="Space Grotesk">{eng.name}</text>
+                                                <text x={x} y={y - 6} textAnchor="middle" fill="var(--text-primary)" fontSize="10" fontFamily="Space Grotesk">{Math.round(eng.score)}</text>
+                                            </g>
+                                        )
+                                    })
+                                })()}
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div className="telemetry-card cyber-corners">
+                        <div className="telemetry-card-title">
+                            <Shield size={14} />
+                            <span>Target Safety Index</span>
+                        </div>
+                        <div className="telemetry-svg-wrap">
+                            <svg viewBox="0 0 200 150" width="100%" height="100%">
+                                <defs>
+                                    <filter id="cyber-glow-dynamic" x="-20%" y="-20%" width="140%" height="140%">
+                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
+                                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                    </filter>
+                                </defs>
+                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(255,255,255,0.02)" strokeWidth="8" />
+                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(0, 210, 255, 0.05)" strokeWidth="8" strokeDasharray="301.6" strokeDashoffset="0" />
+                                <circle cx="100" cy="70" r="48" fill="none" 
+                                    stroke={activeReport.risk_score >= 60 ? "var(--status-danger)" : activeReport.risk_score >= 30 ? "var(--status-warning)" : "var(--status-success)"} 
+                                    strokeWidth="6" 
+                                    strokeDasharray="301.6" 
+                                    strokeDashoffset={301.6 - (301.6 * ((100 - activeReport.risk_score) / 100))}
+                                    strokeLinecap="round"
+                                    filter="url(#cyber-glow-dynamic)"
+                                    transform="rotate(-90 100 70)"
+                                />
+                                <text x="100" y="68" textAnchor="middle" fill="var(--text-primary)" fontSize="18" fontWeight="700" fontFamily="Space Grotesk">
+                                    {100 - activeReport.risk_score}%
+                                </text>
+                                <text x="100" y="85" textAnchor="middle" fill="var(--text-tertiary)" fontSize="8" fontWeight="600" style={{ textTransform: 'uppercase' }} letterSpacing="0.8" fontFamily="Inter">
+                                    Safety Level
+                                </text>
+                            </svg>
+                        </div>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="telemetry-card cyber-corners">
+                        <div className="telemetry-card-title">
+                            <Activity size={14} />
+                            <span>Threat Level Log Analysis</span>
+                        </div>
+                        <div className="telemetry-svg-wrap">
+                            <svg viewBox="0 0 350 150" width="100%" height="100%">
+                                <defs>
+                                    <filter id="cyber-glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
+                                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                    </filter>
+                                    <linearGradient id="cyber-area-cyan" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity="0.2" />
+                                        <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity="0.0" />
+                                    </linearGradient>
+                                </defs>
+                                <line x1="20" y1="20" x2="330" y2="20" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
+                                <line x1="20" y1="60" x2="330" y2="60" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
+                                <line x1="20" y1="100" x2="330" y2="100" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
+                                <line x1="20" y1="140" x2="330" y2="140" stroke="rgba(0, 210, 255, 0.12)" strokeWidth="1.5" />
+                                <path d={(() => {
+                                    const dPoints = history.length > 0 ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 })) : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
+                                    return dPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+                                })()} fill="none" stroke="var(--accent-primary)" strokeWidth="2.5" filter="url(#cyber-glow-cyan)" />
+                                <path d={(() => {
+                                    const dPoints = history.length > 0 ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 })) : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
+                                    const pathString = dPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+                                    return `${pathString} L ${dPoints[dPoints.length - 1].x} 140 L ${dPoints[0].x} 140 Z`;
+                                })()} fill="url(#cyber-area-cyan)" />
+                                {(() => {
+                                    const dPoints = history.length > 0 ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 })) : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
+                                    return dPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="3.5" fill="var(--bg-primary)" stroke="var(--accent-primary)" strokeWidth="2" />);
+                                })()}
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div className="telemetry-card cyber-corners">
+                        <div className="telemetry-card-title">
+                            <Shield size={14} />
+                            <span>Security Integrity Index</span>
+                        </div>
+                        <div className="telemetry-svg-wrap">
+                            <svg viewBox="0 0 200 150" width="100%" height="100%">
+                                <defs>
+                                    <filter id="cyber-glow-violet" x="-20%" y="-20%" width="140%" height="140%">
+                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
+                                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                    </filter>
+                                </defs>
+                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(255,255,255,0.02)" strokeWidth="8" />
+                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(0, 210, 255, 0.05)" strokeWidth="8" strokeDasharray="301.6" strokeDashoffset="0" />
+                                <circle cx="100" cy="70" r="48" fill="none" stroke="var(--accent-violet)" strokeWidth="6" 
+                                    strokeDasharray="301.6" 
+                                    strokeDashoffset={(() => { const ratio = stats.total > 0 ? stats.safe / stats.total : 0.85; return 301.6 - (301.6 * ratio); })()}
+                                    strokeLinecap="round" filter="url(#cyber-glow-violet)" transform="rotate(-90 100 70)"
+                                />
+                                <text x="100" y="68" textAnchor="middle" fill="var(--text-primary)" fontSize="18" fontWeight="700" fontFamily="Space Grotesk">
+                                    {(() => { const ratio = stats.total > 0 ? Math.round((stats.safe / stats.total) * 100) : 85; return `${ratio}%`; })()}
+                                </text>
+                                <text x="100" y="85" textAnchor="middle" fill="var(--text-tertiary)" fontSize="8" fontWeight="600" style={{ textTransform: 'uppercase' }} letterSpacing="0.8" fontFamily="Inter">
+                                    Safe Ratio
+                                </text>
+                                <circle cx="100" cy="70" r="54" className="radial-pulse-glow" fill="none" stroke="var(--accent-primary)" strokeWidth="0.5" strokeDasharray="4 8" />
+                            </svg>
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    )
+
+    const renderSideSection = (activeReport, showHistory = true) => (
+        <div className="side-section">
+            {renderTelemetry(activeReport)}
+
+            {showHistory && (
+                <>
+                    <div className="section-header">
+                        <h2>Recent Activity</h2>
+                        <p>Latest {history.length > 5 ? 5 : history.length} scans</p>
+                    </div>
+
+                    <div className="activity-list">
+                        {history.slice(0, 5).map((h, i) => (
+                            <div key={i} className="activity-item">
+                                <div className="activity-icon"><Globe size={14} /></div>
+                                <div className="activity-details">
+                                    <div className="activity-domain">{h.url ? new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname : 'Unknown'}</div>
+                                    <div className="activity-time">{new Date(h.timestamp).toLocaleTimeString()}</div>
+                                </div>
+                                <div className={`activity-badge ${h.verdict.toLowerCase()}`}>{h.verdict}</div>
+                            </div>
+                        ))}
+                        {history.length === 0 && (
+                            <div className="empty-activity"><p>No recent scans</p></div>
+                        )}
+                    </div>
+                </>
+            )}
+        </div>
+    )
 
     return (
         <div className="app-shell">
@@ -536,7 +877,21 @@ Return ONLY valid JSON:
                         onClick={() => { setView('dashboard'); setMobileMenuOpen(false); }}
                     >
                         <LayoutDashboard size={18} />
-                        <span>Overview</span>
+                        <span>Website Scan</span>
+                    </button>
+                    <button
+                        className={`nav-link ${view === 'email' ? 'active' : ''}`}
+                        onClick={() => { setView('email'); setMobileMenuOpen(false); }}
+                    >
+                        <Mail size={18} />
+                        <span>Email Scan</span>
+                    </button>
+                    <button
+                        className={`nav-link ${view === 'chat' ? 'active' : ''}`}
+                        onClick={() => { setView('chat'); setMobileMenuOpen(false); }}
+                    >
+                        <MessageSquare size={18} />
+                        <span>Chat Scan</span>
                     </button>
                     <button
                         className={`nav-link ${view === 'history' ? 'active' : ''}`}
@@ -545,16 +900,7 @@ Return ONLY valid JSON:
                         <Clock size={18} />
                         <span>Scan History</span>
                     </button>
-                    <button
-                        className={`nav-link ${view === 'email' ? 'active' : ''}`}
-                        onClick={() => { setView('email'); setMobileMenuOpen(false); }}
-                    >
-                        <Mail size={18} />
-                        <span>Email Scanner</span>
-                    </button>
                 </nav>
-
-
 
                 <div className="user-profile">
                     <div className="profile-info">
@@ -580,7 +926,7 @@ Return ONLY valid JSON:
                         {/* HEADER WITH STATS */}
                         <div className="page-header">
                             <div className="header-main">
-                                <h1>Security Dashboard</h1>
+                                <h1>Website Threat Scanner</h1>
                                 <p>Real-time threat analysis and detection</p>
                             </div>
                             <div className="header-stats">
@@ -659,149 +1005,7 @@ Return ONLY valid JSON:
                                 </div>
                             </div>
 
-                            {/* SIDEBAR: RECENT ACTIVITY */}
-                            <div className="side-section">
-                                {/* CYBER TELEMETRY DASHBOARD */}
-                                <div className="cyber-telemetry-container">
-                                    {/* GRAPH CARD */}
-                                    <div className="telemetry-card cyber-corners">
-                                        <div className="telemetry-card-title">
-                                            <Activity size={14} />
-                                            <span>Threat Level Log Analysis</span>
-                                        </div>
-                                        <div className="telemetry-svg-wrap">
-                                            <svg viewBox="0 0 350 150" width="100%" height="100%">
-                                                <defs>
-                                                    <filter id="cyber-glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
-                                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
-                                                        <feMerge>
-                                                            <feMergeNode in="blur"/>
-                                                            <feMergeNode in="SourceGraphic"/>
-                                                        </feMerge>
-                                                    </filter>
-                                                    <linearGradient id="cyber-area-cyan" x1="0" y1="0" x2="0" y2="1">
-                                                        <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity="0.2" />
-                                                        <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity="0.0" />
-                                                    </linearGradient>
-                                                </defs>
-                                                
-                                                {/* Grid lines */}
-                                                <line x1="20" y1="20" x2="330" y2="20" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
-                                                <line x1="20" y1="60" x2="330" y2="60" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
-                                                <line x1="20" y1="100" x2="330" y2="100" stroke="rgba(255,255,255,0.02)" strokeWidth="1" />
-                                                <line x1="20" y1="140" x2="330" y2="140" stroke="rgba(0, 210, 255, 0.12)" strokeWidth="1.5" />
-                                                
-                                                {/* Trend line and fill */}
-                                                <path d={(() => {
-                                                    const dPoints = history.length > 0
-                                                        ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 }))
-                                                        : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
-                                                    const pathString = dPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-                                                    return pathString;
-                                                })()} fill="none" stroke="var(--accent-primary)" strokeWidth="2.5" filter="url(#cyber-glow-cyan)" />
-                                                
-                                                <path d={(() => {
-                                                    const dPoints = history.length > 0
-                                                        ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 }))
-                                                        : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
-                                                    const pathString = dPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-                                                    return `${pathString} L ${dPoints[dPoints.length - 1].x} 140 L ${dPoints[0].x} 140 Z`;
-                                                })()} fill="url(#cyber-area-cyan)" />
-                                                
-                                                {/* Data points */}
-                                                {(() => {
-                                                    const dPoints = history.length > 0
-                                                        ? [...history].reverse().slice(-7).map((h, i) => ({ x: 30 + i * 46, y: 130 - (h.risk_score || 0) * 0.9 }))
-                                                        : [{x:30,y:110},{x:76,y:90},{x:122,y:120},{x:168,y:60},{x:214,y:80},{x:260,y:40},{x:306,y:30}];
-                                                    return dPoints.map((p, i) => (
-                                                        <circle key={i} cx={p.x} cy={p.y} r="3.5" fill="var(--bg-primary)" stroke="var(--accent-primary)" strokeWidth="2" />
-                                                    ));
-                                                })()}
-                                            </svg>
-                                        </div>
-                                    </div>
-
-                                    {/* GAUGE CARD */}
-                                    <div className="telemetry-card cyber-corners">
-                                        <div className="telemetry-card-title">
-                                            <Shield size={14} />
-                                            <span>Security Integrity Index</span>
-                                        </div>
-                                        <div className="telemetry-svg-wrap">
-                                            <svg viewBox="0 0 200 150" width="100%" height="100%">
-                                                <defs>
-                                                    <filter id="cyber-glow-violet" x="-20%" y="-20%" width="140%" height="140%">
-                                                        <feGaussianBlur stdDeviation="2.5" result="blur" />
-                                                        <feMerge>
-                                                            <feMergeNode in="blur"/>
-                                                            <feMergeNode in="SourceGraphic"/>
-                                                        </feMerge>
-                                                    </filter>
-                                                </defs>
-                                                
-                                                {/* Track circle */}
-                                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(255,255,255,0.02)" strokeWidth="8" />
-                                                <circle cx="100" cy="70" r="48" fill="none" stroke="rgba(0, 210, 255, 0.05)" strokeWidth="8" strokeDasharray="301.6" strokeDashoffset="0" />
-                                                
-                                                {/* Progress Arc */}
-                                                <circle cx="100" cy="70" r="48" fill="none" stroke="var(--accent-violet)" strokeWidth="6" 
-                                                    strokeDasharray="301.6" 
-                                                    strokeDashoffset={(() => {
-                                                        const ratio = stats.total > 0 ? stats.safe / stats.total : 0.85;
-                                                        return 301.6 - (301.6 * ratio);
-                                                    })()}
-                                                    strokeLinecap="round"
-                                                    filter="url(#cyber-glow-violet)"
-                                                    transform="rotate(-90 100 70)"
-                                                />
-                                                
-                                                {/* Inner Telemetry Text */}
-                                                <text x="100" y="68" textAnchor="middle" fill="var(--text-primary)" fontSize="18" fontWeight="700" fontFamily="Space Grotesk">
-                                                    {(() => {
-                                                        const ratio = stats.total > 0 ? Math.round((stats.safe / stats.total) * 100) : 85;
-                                                        return `${ratio}%`;
-                                                    })()}
-                                                </text>
-                                                <text x="100" y="85" textAnchor="middle" fill="var(--text-tertiary)" fontSize="8" fontWeight="600" style={{ textTransform: 'uppercase' }} letterSpacing="0.8" fontFamily="Inter">
-                                                    Safe Ratio
-                                                </text>
-                                                
-                                                {/* Glowing indicator light */}
-                                                <circle cx="100" cy="70" r="54" className="radial-pulse-glow" fill="none" stroke="var(--accent-primary)" strokeWidth="0.5" strokeDasharray="4 8" />
-                                            </svg>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="section-header">
-                                    <h2>Recent Activity</h2>
-                                    <p>Latest {history.length > 5 ? 5 : history.length} scans</p>
-                                </div>
-
-                                <div className="activity-list">
-                                    {history.slice(0, 5).map((h, i) => (
-                                        <div key={i} className="activity-item">
-                                            <div className="activity-icon">
-                                                <Globe size={14} />
-                                            </div>
-                                            <div className="activity-details">
-                                                <div className="activity-domain">
-  {h.url ? new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname : 'Unknown'}
-</div>
-                                                <div className="activity-time">{new Date(h.timestamp).toLocaleTimeString()}</div>
-                                            </div>
-                                            <div className={`activity-badge ${h.verdict.toLowerCase()}`}>
-                                                {h.verdict}
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {history.length === 0 && (
-                                        <div className="empty-activity">
-                                            <p>No recent scans</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                            {renderSideSection(report)}
 
                         </div>
                     </>
@@ -853,129 +1057,272 @@ Return ONLY valid JSON:
                             </div>
                         </div>
 
-                        <div className="email-scanner-content">
-                            {/* EMAIL INPUT FORM */}
-                            <div className="email-form-section">
-                                <div className="section-header">
-                                    <h2>Analyze Email</h2>
-                                    <p>Paste the email details below for AI-powered threat analysis</p>
+                        <div className="email-scanner-content" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 'var(--space-6)', alignItems: 'start' }}>
+                            <div className="email-left-col" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+                                {/* EMAIL INPUT FORM */}
+                                <div className="email-form-section">
+                                    <div className="section-header">
+                                        <h2>Analyze Email</h2>
+                                        <p>Paste the email details below for AI-powered threat analysis</p>
+                                    </div>
+
+                                    <form onSubmit={handleEmailScan} className="email-form-card">
+                                        <div className="email-field">
+                                            <label htmlFor="emailSender">
+                                                <Mail size={14} />
+                                                <span>Sender Address</span>
+                                            </label>
+                                            <input
+                                                id="emailSender"
+                                                type="text"
+                                                value={emailSender}
+                                                onChange={(e) => setEmailSender(e.target.value)}
+                                                placeholder='e.g. support@paypa1-security.com'
+                                            />
+                                        </div>
+
+                                        <div className="email-field">
+                                            <label htmlFor="emailSubject">
+                                                <Inbox size={14} />
+                                                <span>Subject Line</span>
+                                            </label>
+                                            <input
+                                                id="emailSubject"
+                                                type="text"
+                                                value={emailSubject}
+                                                onChange={(e) => setEmailSubject(e.target.value)}
+                                                placeholder='e.g. URGENT: Your account has been compromised!'
+                                            />
+                                        </div>
+
+                                        <div className="email-field">
+                                            <label htmlFor="emailBody">
+                                                <Terminal size={14} />
+                                                <span>Email Body</span>
+                                            </label>
+                                            <textarea
+                                                id="emailBody"
+                                                value={emailBody}
+                                                onChange={(e) => setEmailBody(e.target.value)}
+                                                placeholder='Paste the full email body content here...'
+                                                rows={8}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="submit"
+                                            className="email-scan-btn"
+                                            disabled={emailStatus === 'analyzing' || (!emailSender.trim() && !emailSubject.trim() && !emailBody.trim())}
+                                        >
+                                            <Send size={18} />
+                                            <span>{emailStatus === 'analyzing' ? 'Analyzing...' : 'Scan for Threats'}</span>
+                                        </button>
+                                    </form>
                                 </div>
 
-                                <form onSubmit={handleEmailScan} className="email-form-card">
-                                    <div className="email-field">
-                                        <label htmlFor="emailSender">
-                                            <Mail size={14} />
-                                            <span>Sender Address</span>
-                                        </label>
-                                        <input
-                                            id="emailSender"
-                                            type="text"
-                                            value={emailSender}
-                                            onChange={(e) => setEmailSender(e.target.value)}
-                                            placeholder='e.g. support@paypa1-security.com'
-                                        />
-                                    </div>
-
-                                    <div className="email-field">
-                                        <label htmlFor="emailSubject">
-                                            <Inbox size={14} />
-                                            <span>Subject Line</span>
-                                        </label>
-                                        <input
-                                            id="emailSubject"
-                                            type="text"
-                                            value={emailSubject}
-                                            onChange={(e) => setEmailSubject(e.target.value)}
-                                            placeholder='e.g. URGENT: Your account has been compromised!'
-                                        />
-                                    </div>
-
-                                    <div className="email-field">
-                                        <label htmlFor="emailBody">
-                                            <Terminal size={14} />
-                                            <span>Email Body</span>
-                                        </label>
-                                        <textarea
-                                            id="emailBody"
-                                            value={emailBody}
-                                            onChange={(e) => setEmailBody(e.target.value)}
-                                            placeholder='Paste the full email body content here...'
-                                            rows={8}
-                                        />
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        className="email-scan-btn"
-                                        disabled={emailStatus === 'analyzing' || (!emailSender.trim() && !emailSubject.trim() && !emailBody.trim())}
-                                    >
-                                        <Send size={18} />
-                                        <span>{emailStatus === 'analyzing' ? 'Analyzing...' : 'Scan for Threats'}</span>
-                                    </button>
-                                </form>
+                                <div className="side-section" style={{ width: '100%' }}>
+                                    {renderTelemetry(emailReport)}
+                                </div>
                             </div>
 
-                            {/* EMAIL RESULTS */}
-                            <div className="email-result-section">
-                                <div className="section-header">
-                                    <h2>Analysis Results</h2>
-                                    <p>AI-powered phishing detection report</p>
+                            <div className="email-right-col">
+                                {/* EMAIL RESULTS */}
+                                <div className="email-result-section">
+                                    <div className="section-header">
+                                        <h2>Analysis Results</h2>
+                                        <p>AI-powered phishing detection report</p>
+                                    </div>
+
+                                    <div className="email-result-card">
+                                        {emailStatus === 'idle' && (
+                                            <div className="state-empty">
+                                                <div className="icon-ring">
+                                                    <Mail size={32} />
+                                                </div>
+                                                <h3>Paste an Email to Scan</h3>
+                                                <p>Enter the sender, subject, and body of a suspicious email to analyze it for phishing threats</p>
+                                            </div>
+                                        )}
+
+                                        {emailStatus === 'analyzing' && (
+                                            <div className="state-analyzing">
+                                                <div className="radar-spinner"></div>
+                                                <h3>{emailLoadingMsg}</h3>
+                                                <div className="target-url">
+                                                    {emailSender || 'Unknown Sender'}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {(emailStatus === 'success' || emailStatus === 'error') && emailReport && (
+                                            <div className="report-container">
+                                                <div className="report-header">
+                                                    <div className="verdict-section">
+                                                        <div className={`verdict-chip ${emailReport.verdict.toLowerCase()}`}>
+                                                            {emailReport.verdict}
+                                                        </div>
+                                                        <p className="report-title">{emailReport.summary}</p>
+                                                    </div>
+                                                    <div className="risk-section">
+                                                        <div className="risk-label">Phishing Score</div>
+                                                        <div className="risk-value">
+                                                            <span className="risk-val">{emailReport.risk_score}</span>
+                                                            <span className="risk-max">/100</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <ThreatAnalysisReport report={emailReport} />
+
+                                                <button
+                                                    className="scan-again-btn"
+                                                    onClick={() => {
+                                                        setEmailStatus('idle')
+                                                        setEmailReport(null)
+                                                        setEmailSender('')
+                                                        setEmailSubject('')
+                                                        setEmailBody('')
+                                                    }}
+                                                >
+                                                    Scan Another Email
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {view === 'chat' && (
+                    <div className="email-scanner-page">
+                        <div className="page-header">
+                            <div className="header-main">
+                                <h1>Chat Threat Scanner</h1>
+                                <p>Detect scams in WhatsApp, SMS, and Telegram messages</p>
+                            </div>
+                        </div>
+
+                        <div className="email-scanner-content" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 'var(--space-6)', alignItems: 'start' }}>
+                            <div className="email-left-col" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+                                {/* CHAT INPUT FORM */}
+                                <div className="email-form-section">
+                                    <div className="section-header">
+                                        <h2>Analyze Chat Message</h2>
+                                        <p>Upload a screenshot for AI-powered scam detection</p>
+                                    </div>
+
+                                    <form onSubmit={handleChatScan} className="email-form-card">
+                                        <div className="email-field">
+                                            <label htmlFor="chatSender">
+                                                <User size={14} />
+                                                <span>Sender</span>
+                                            </label>
+                                            <input
+                                                id="chatSender"
+                                                type="text"
+                                                value={chatSender}
+                                                readOnly
+                                                placeholder='No sender detected'
+                                                style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+                                            />
+                                        </div>
+                                        
+                                        <div className="email-field">
+                                            <label htmlFor="chatMessage">
+                                                <MessageSquare size={14} />
+                                                <span>Extracted Message Content</span>
+                                            </label>
+                                            <textarea
+                                                id="chatMessage"
+                                                value={chatMessage}
+                                                readOnly
+                                                placeholder='No text selected. Please highlight text and use the Chrome Extension.'
+                                                rows={5}
+                                                style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="submit"
+                                            className="email-scan-btn"
+                                            disabled={chatStatus === 'analyzing' || !chatSender.trim() || !chatMessage.trim()}
+                                        >
+                                            <Send size={18} />
+                                            <span>{chatStatus === 'analyzing' ? 'Analyzing...' : 'Scan Chat Message'}</span>
+                                        </button>
+                                    </form>
                                 </div>
 
-                                <div className="email-result-card">
-                                    {emailStatus === 'idle' && (
-                                        <div className="state-empty">
-                                            <div className="icon-ring">
-                                                <Mail size={32} />
-                                            </div>
-                                            <h3>Paste an Email to Scan</h3>
-                                            <p>Enter the sender, subject, and body of a suspicious email to analyze it for phishing threats</p>
-                                        </div>
-                                    )}
+                                <div className="side-section" style={{ width: '100%' }}>
+                                    {renderTelemetry(chatReport)}
+                                </div>
+                            </div>
 
-                                    {emailStatus === 'analyzing' && (
-                                        <div className="state-analyzing">
-                                            <div className="radar-spinner"></div>
-                                            <h3>{emailLoadingMsg}</h3>
-                                            <div className="target-url">
-                                                {emailSender || 'Unknown Sender'}
-                                            </div>
-                                        </div>
-                                    )}
+                            <div className="email-right-col">
+                                {/* CHAT RESULTS */}
+                                <div className="email-result-section">
+                                    <div className="section-header">
+                                        <h2>Analysis Results</h2>
+                                        <p>AI-powered scam detection report</p>
+                                    </div>
 
-                                    {(emailStatus === 'success' || emailStatus === 'error') && emailReport && (
-                                        <div className="report-container">
-                                            <div className="report-header">
-                                                <div className="verdict-section">
-                                                    <div className={`verdict-chip ${emailReport.verdict.toLowerCase()}`}>
-                                                        {emailReport.verdict}
-                                                    </div>
-                                                    <p className="report-title">{emailReport.summary}</p>
+                                    <div className="email-result-card">
+                                        {chatStatus === 'idle' && (
+                                            <div className="state-empty">
+                                                <div className="icon-ring">
+                                                    <MessageSquare size={32} />
                                                 </div>
-                                                <div className="risk-section">
-                                                    <div className="risk-label">Phishing Score</div>
-                                                    <div className="risk-value">
-                                                        <span className="risk-val">{emailReport.risk_score}</span>
-                                                        <span className="risk-max">/100</span>
-                                                    </div>
+                                                <h3>Analyze a Chat Message</h3>
+                                                <p>Highlight text in WhatsApp Web or Telegram Web and click "Scan Chat" from the Chrome Extension.</p>
+                                            </div>
+                                        )}
+
+                                        {chatStatus === 'analyzing' && (
+                                            <div className="state-analyzing">
+                                                <div className="radar-spinner"></div>
+                                                <h3>{chatLoadingMsg}</h3>
+                                                <div className="target-url">
+                                                    {chatSender || 'Unknown Sender'}
                                                 </div>
                                             </div>
-                                            <ThreatAnalysisReport report={emailReport} />
+                                        )}
 
-                                            <button
-                                                className="scan-again-btn"
-                                                onClick={() => {
-                                                    setEmailStatus('idle')
-                                                    setEmailReport(null)
-                                                    setEmailSender('')
-                                                    setEmailSubject('')
-                                                    setEmailBody('')
-                                                }}
-                                            >
-                                                Scan Another Email
-                                            </button>
-                                        </div>
-                                    )}
+                                        {(chatStatus === 'success' || chatStatus === 'error') && chatReport && (
+                                            <div className="report-container">
+                                                <div className="report-header">
+                                                    <div className="verdict-section">
+                                                        <div className={`verdict-chip ${chatReport.verdict.toLowerCase()}`}>
+                                                            {chatReport.verdict}
+                                                        </div>
+                                                        <p className="report-title">{chatReport.summary}</p>
+                                                    </div>
+                                                    <div className="risk-section">
+                                                        <div className="risk-label">Threat Score</div>
+                                                        <div className="risk-value">
+                                                            <span className="risk-val">{chatReport.risk_score}</span>
+                                                            <span className="risk-max">/100</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <ThreatAnalysisReport report={chatReport} />
+
+                                                <button
+                                                    className="scan-again-btn"
+                                                    onClick={() => {
+                                                        setChatStatus('idle')
+                                                        setChatReport(null)
+                                                        setChatSender('')
+                                                        setChatMessage('')
+                                                        const fileInput = document.getElementById('chatImageUpload')
+                                                        if(fileInput) fileInput.value = ''
+                                                    }}
+                                                >
+                                                    Scan Another Message
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <meta charset="UTF-8">
     <style>
@@ -163,6 +162,16 @@
             box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
         }
 
+        /* Chat Scan Button */
+        .scan-chat-btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
+        .scan-chat-btn:hover {
+            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.5);
+        }
+
         /* Gmail detected hint */
         .gmail-hint {
             display: none;
@@ -313,11 +322,24 @@
             </svg>
             Scan Email
         </button>
+
+        <div class="divider">
+            <div class="divider-line"></div>
+            <span class="divider-text">or</span>
+            <div class="divider-line"></div>
+        </div>
+
+        <!-- Scan Chat Button -->
+        <div class="section-label">💬 Chat Scam Detection</div>
+        <button id="scanChatBtn" class="scan-btn scan-chat-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Scan Chat
+        </button>
     </div>
 
-    <div class="footer">
-        Powered by F.R.I.D.A.Y
-    </div>
     <script src="popup.js"></script>
 </body>
 

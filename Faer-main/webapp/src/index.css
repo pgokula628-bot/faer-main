@@ -307,6 +307,10 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ANALYSIS CARD */
+.main-section {
+  min-width: 0;
+}
+
 .analysis-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -314,6 +318,11 @@ h1, h2, h3, h4, h5, h6 {
   padding: var(--space-8);
   box-shadow: var(--shadow-sm);
   min-height: 600px;
+}
+
+.analysis-para, .rule-line-text, .ioc-val {
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* STATES */

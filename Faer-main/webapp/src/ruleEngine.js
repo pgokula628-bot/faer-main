@@ -239,3 +239,79 @@ export function analyzeEmail(sender, subject, body) {
         rules_triggered: ruleEvaluations.filter(r => r.applies && r.rule_id !== 14).map(r => r.rule_id)
     }
 }
+
+export function analyzeChat(sender, message) {
+    const findings = []
+    const ruleEvaluations = []
+    let score = 0
+    const content = (message || '').toLowerCase()
+    const s = (sender || '').trim()
+
+    // Rule 1: Unknown / Unsaved Sender
+    // If the sender starts with a '+' or is purely digits, it's likely an unsaved/unknown contact.
+    const isUnknownSender = /^[+\d]/.test(s) || /^\d+$/.test(s.replace(/[\s-]/g, ''))
+    if (isUnknownSender) {
+        score += 40
+        findings.push({ type: 'Rule 1', value: 'Unknown or unsaved sender' })
+    }
+    ruleEvaluations.push(ruleEval(1, 'Unknown Sender', isUnknownSender, 'Sender is not a saved contact (+40)', 'Saved contact', 40))
+
+    // Rule 2: Urgency Language
+    const urg = URGENCY_WORDS.filter(w => content.includes(w))
+    const r2 = urg.length >= 1
+    if (urg.length >= 2) { score += 25; findings.push({ type: 'Rule 2', value: urg.slice(0, 2).join(', ') }) }
+    else if (r2) { score += 15; findings.push({ type: 'Rule 2', value: urg[0] }) }
+    ruleEvaluations.push(ruleEval(2, 'Urgency/Threat Language', r2, `${urg.length} urgency phrase(s) (+${urg.length >= 2 ? 25 : 15})`, 'No urgency triggers', urg.length >= 2 ? 25 : 15))
+
+    // Rule 3: Sensitive Information Request
+    const sens = SENSITIVE_WORDS.filter(w => content.includes(w))
+    const r3 = sens.length >= 1
+    if (sens.length >= 2) { score += 30; findings.push({ type: 'Rule 3', value: sens.slice(0, 2).join(', ') }) }
+    else if (r3) { score += 20; findings.push({ type: 'Rule 3', value: sens[0] }) }
+    ruleEvaluations.push(ruleEval(3, 'Sensitive Data Request', r3, `${sens.length} sensitive term(s) (+${sens.length >= 2 ? 30 : 20})`, 'No sensitive data requested', sens.length >= 2 ? 30 : 20))
+
+    // Rule 4: Contains External Links
+    const links = content.match(/https?:\/\/[^\s"'<>]+/gi) || []
+    const r4 = links.length > 0
+    if (r4) { 
+        score += 15; 
+        findings.push({ type: 'Rule 4', value: `Contains ${links.length} external link(s)` }) 
+    }
+    ruleEvaluations.push(ruleEval(4, 'External Links', r4, `Contains ${links.length} embedded link(s) (+15)`, 'No embedded links', 15))
+
+    // Rule 5: Investment / Crypto Scams
+    const cryptoWords = ['crypto', 'bitcoin', 'investment', 'guaranteed returns', 'forex', 'binance', 'usdt']
+    const cryptoHits = cryptoWords.filter(w => content.includes(w))
+    const r5 = cryptoHits.length >= 1
+    if (r5) { score += 20; findings.push({ type: 'Rule 5', value: cryptoHits.join(', ') }) }
+    ruleEvaluations.push(ruleEval(5, 'Investment/Crypto Pitch', r5, 'Contains investment or crypto keywords (+20)', 'No investment scam keywords', 20))
+
+    // Rule 6: OTP / Verification Fraud
+    const otpFraud = content.includes('otp') || content.includes('verification code') || content.includes('do not share')
+    const r6 = otpFraud
+    if (r6) { score += 20; findings.push({ type: 'Rule 6', value: 'OTP/Verification context' }) }
+    ruleEvaluations.push(ruleEval(6, 'OTP Fraud Indicators', r6, 'Discusses OTPs or verification codes (+20)', 'No OTP context', 20))
+
+    // Rule 7: Impersonation Attempts
+    const impWords = ['this is my new number', 'i lost my phone', 'my old number', 'new phone', 'new number']
+    const impHits = impWords.filter(w => content.includes(w))
+    const r7 = impHits.length >= 1
+    if (r7) { score += 25; findings.push({ type: 'Rule 7', value: impHits.join(', ') }) }
+    ruleEvaluations.push(ruleEval(7, 'Impersonation Attempt', r7, 'Suspicious "new number" claims (+25)', 'No impersonation patterns', 25))
+
+    score = Math.min(100, Math.max(0, score))
+    const triggered = ruleEvaluations.filter(r => r.applies).length
+    let verdict = score >= 55 ? 'Dangerous' : score >= 28 ? 'Suspicious' : 'Safe'
+
+    return {
+        verdict,
+        risk_score: score,
+        summary: verdict === 'Dangerous' ? 'High-Risk Chat Scam' : verdict === 'Suspicious' ? 'Potentially Unsafe Chat' : 'No Major Threats Detected',
+        explanation: triggered ? `${triggered} of 7 chat threat rules triggered.` : 'All 7 chat threat rules clear.',
+        action: verdict === 'Dangerous' ? 'Do not reply. Block the sender.' : verdict === 'Suspicious' ? 'Verify sender identity independently.' : 'Proceed with normal caution.',
+        iocs: findings,
+        indicators: findings.map(f => ({ type: f.type, detail: f.value, severity: f.type === 'Rule 4' ? 'medium' : 'high' })),
+        rule_evaluations: ruleEvaluations,
+        rules_triggered: ruleEvaluations.filter(r => r.applies).map(r => r.rule_id)
+    }
+}

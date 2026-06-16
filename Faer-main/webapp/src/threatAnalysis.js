@@ -131,44 +131,22 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
 
     const verdict = pickVerdict(gemini?.verdict, rules.verdict, ml?.verdict)
 
-    // Dynamic weighting: only count sources that actually returned a response
-    const hasGemini = gemini !== null && typeof gemini.risk_score === 'number'
-    const hasMl = ml !== null && typeof ml.risk_score === 'number'
-    const hasRules = rules !== null && typeof rules.risk_score === 'number'
+    const rawMl = ml !== null && typeof ml.risk_score === 'number' ? ml.risk_score : 0
+    const rawAi = gemini !== null && typeof gemini.risk_score === 'number' ? gemini.risk_score : 0
+    const rawRules = rules !== null && typeof rules.risk_score === 'number' ? rules.risk_score : 0
 
-    let risk_score
-    if (hasGemini && hasMl && hasRules) {
-        // All three sources available — use original weights
-        risk_score = Math.round(
-            gemini.risk_score * 0.45 +
-            rules.risk_score * 0.35 +
-            ml.risk_score * 0.20 +
-            (liveIntel?.risk_boost || 0)
-        )
-    } else if (hasGemini && hasRules) {
-        // Gemini + Rules only
-        risk_score = Math.round(
-            gemini.risk_score * 0.55 +
-            rules.risk_score * 0.45 +
-            (liveIntel?.risk_boost || 0)
-        )
-    } else if (hasMl && hasRules) {
-        // ML + Rules only
-        risk_score = Math.round(
-            rules.risk_score * 0.70 +
-            ml.risk_score * 0.30 +
-            (liveIntel?.risk_boost || 0)
-        )
-    } else {
-        // Rules only — use full rule engine score without dilution
-        risk_score = Math.round(
-            (rules.risk_score || 0) +
-            (liveIntel?.risk_boost || 0)
-        )
+    const mlContribution = Math.round((rawMl / 100) * 40)
+    const aiContribution = Math.round((rawAi / 100) * 30)
+    const rulesContribution = Math.round((rawRules / 100) * 30)
+
+    let base_score = mlContribution + aiContribution + rulesContribution
+
+    if (liveIntel?.any_threat) {
+        base_score = Math.max(base_score, 70) + (liveIntel?.risk_boost || 0)
     }
 
-    risk_score = Math.min(100, Math.max(0, risk_score))
-    if (liveIntel?.any_threat) risk_score = Math.max(risk_score, 70)
+    let risk_score = Math.round(base_score)
+    risk_score = Math.min(98, Math.max(0, risk_score))
     
     // Derive consensus verdict purely from the weighted score
     const consensus_verdict = risk_score >= 60 ? 'Dangerous' : risk_score >= 30 ? 'Suspicious' : 'Safe'
@@ -210,7 +188,13 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
         risk_score,
         rules_triggered: matchedRules.map(r => r.rule_id),
         action: clean(gemini?.action || rules.action),
-        analysis_mode: 'unified-v4'
+        analysis_mode: 'unified-v4',
+        components: {
+            rules: rulesContribution,
+            ml: mlContribution,
+            gemini: aiContribution,
+            live: Math.min(98, liveIntel?.risk_boost || 0)
+        }
     }
 }
 

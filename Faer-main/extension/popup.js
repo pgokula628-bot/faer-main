@@ -96,6 +96,40 @@ document.getElementById('scanEmailBtn').addEventListener('click', async () => {
   });
 });
 
+// ========== SCAN CHAT ==========
+document.getElementById('scanChatBtn').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://')) {
+    alert('Cannot scan browser system pages.');
+    return;
+  }
+
+  chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    function: getChatContent,
+  }, (results) => {
+    if (chrome.runtime.lastError) {
+      console.error(chrome.runtime.lastError);
+      alert('Error extracting chat: ' + chrome.runtime.lastError.message);
+      return;
+    }
+    if (results && results[0]) {
+      const { sender, message } = results[0].result;
+      
+      if (!message) {
+        alert('Please highlight the suspicious chat message text before scanning!');
+        return;
+      }
+      
+      const safeMessage = message.substring(0, 4000);
+      // type=chat tells the webapp to open the Chat Scanner page
+      const targetUrl = `http://localhost:5173/?type=chat&sender=${encodeURIComponent(sender || '')}&message=${encodeURIComponent(safeMessage)}`;
+      chrome.tabs.create({ url: targetUrl });
+    }
+  });
+});
+
 // ========== CONTENT EXTRACTION FUNCTIONS ==========
 
 function getPageContent() {
@@ -211,4 +245,38 @@ function getEmailContent() {
   }
 
   return { sender, subject, body };
+}
+
+function getChatContent() {
+  let sender = '';
+  let message = window.getSelection().toString().trim();
+
+  try {
+    // Try to auto-extract sender from known chat platforms
+    const host = window.location.hostname;
+    
+    if (host.includes('web.whatsapp.com')) {
+      const headerTitle = document.querySelector('#main header span[title]');
+      if (headerTitle) {
+        sender = headerTitle.getAttribute('title').trim();
+      } else {
+        const altHeader = document.querySelector('#main header [dir="auto"]');
+        if (altHeader) sender = altHeader.textContent.trim();
+      }
+    } else if (host.includes('web.telegram.org')) {
+      const headerTitle = document.querySelector('.chat-title, .ChatInfo .person-name, .info .title');
+      if (headerTitle) {
+        sender = headerTitle.textContent.trim();
+      }
+    } else if (host.includes('messages.google.com')) {
+      const headerTitle = document.querySelector('.conversation-title, mws-conversation-list-item[selected] .name');
+      if (headerTitle) {
+        sender = headerTitle.textContent.trim();
+      }
+    }
+  } catch(e) {
+    console.error("Auto-extraction of sender failed", e);
+  }
+
+  return { sender, message };
 }
