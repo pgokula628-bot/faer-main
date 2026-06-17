@@ -122,11 +122,10 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, targetLabel, max
 
     const rawRules = rules !== null && typeof rules.risk_score === 'number' ? rules.risk_score : 0
 
-    const mlContribution = Math.round((rawMl / 100) * 40)
-    const aiContribution = Math.round((rawAi / 100) * 30)
-    const rulesContribution = Math.round((rawRules / 100) * 30)
+    const mlContribution = Math.round((rawMl / 100) * 50)
+    const rulesContribution = Math.round((rawRules / 100) * 50)
 
-    let base_score = mlContribution + aiContribution + rulesContribution
+    let base_score = mlContribution + rulesContribution
 
     let risk_score = Math.round(base_score)
     risk_score = Math.min(98, Math.max(0, risk_score))
@@ -174,8 +173,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, targetLabel, max
         analysis_mode: 'unified-v4',
         components: {
             rules: rulesContribution,
-            ml: mlContribution,
-            gemini: aiContribution
+            ml: mlContribution
         }
     }
 }

@@ -677,12 +677,11 @@ Return ONLY valid JSON:
                                 
                                 {(() => {
                                     const engines = [
-                                        { name: 'Rules', score: activeReport.components.rules },
-                                        { name: 'ML', score: activeReport.components.ml },
-                                        { name: 'Open Source AI', score: activeReport.components.gemini }
+                                        { name: 'Rules Engine', score: activeReport.components?.rules || 0 },
+                                        { name: 'ML Backend', score: activeReport.components?.ml || 0 }
                                     ]
                                     return engines.map((eng, i) => {
-                                        const x = 85 + (i * 90)
+                                        const x = 115 + (i * 120)
                                         const h = Math.max(1, (eng.score / 100) * 80)
                                         const y = 120 - h
                                         return (
