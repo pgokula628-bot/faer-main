@@ -144,21 +144,33 @@ function getEmailContent() {
   let subject = '';
   let body = '';
 
+  const getVisibleOrLast = (selector) => {
+    const elements = Array.from(document.querySelectorAll(selector));
+    const visible = elements.filter(el => el.offsetWidth > 0 || el.offsetHeight > 0);
+    if (visible.length > 0) {
+      return visible[visible.length - 1];
+    }
+    if (elements.length > 0) {
+      return elements[elements.length - 1];
+    }
+    return null;
+  };
+
   // ===== GMAIL EXTRACTION =====
   if (window.location.hostname === 'mail.google.com') {
 
     // --- Sender ---
-    // Gmail uses data-hovercard-id or email attribute on sender elements
     const senderSelectors = [
-      'span[email]',                    // Most reliable - has email attribute
+      'span.gD[email]',                 // Specific Gmail sender element
+      'span.gD',                        // Sender name class
       '[data-hovercard-id]',            // Hovercard on sender name
-      'span.gD',                        // Sender name in expanded view
+      'table.cf.gJ span[email]',        // Sender in header table
       'span.go',                        // Sender in message header
-      'table.cf.gJ span[email]',       // Sender in header table
+      'span[email]',                    // Fallback generic email attribute
     ];
 
     for (const sel of senderSelectors) {
-      const el = document.querySelector(sel);
+      const el = getVisibleOrLast(sel);
       if (el) {
         sender = el.getAttribute('email') || el.getAttribute('data-hovercard-id') || el.textContent.trim();
         if (sender) break;
@@ -167,23 +179,21 @@ function getEmailContent() {
 
     // --- Subject ---
     const subjectSelectors = [
-      'h2[data-thread-perm-id]',       // Thread subject heading
-      'h2.hP',                          // Subject line in conversation view
-      'div[data-thread-perm-id] h2',   // Nested subject
-      'h2[data-legacy-thread-id]',     // Legacy thread ID heading
+      'h2[data-thread-perm-id]',
+      'h2.hP',
+      'div[data-thread-perm-id] h2',
+      'h2[data-legacy-thread-id]',
     ];
 
     for (const sel of subjectSelectors) {
-      const el = document.querySelector(sel);
+      const el = getVisibleOrLast(sel);
       if (el) {
         subject = el.textContent.trim();
         if (subject) break;
       }
     }
 
-    // If subject still not found, try the page title (Gmail sets it to subject)
     if (!subject && document.title) {
-      // Gmail title format: "Subject - sender@email.com - Gmail"
       const titleParts = document.title.split(' - ');
       if (titleParts.length >= 2) {
         subject = titleParts[0].trim();
@@ -192,43 +202,42 @@ function getEmailContent() {
 
     // --- Body ---
     const bodySelectors = [
-      'div.a3s.aiL',                   // Main email body container
-      'div.a3s',                        // Email body without aiL class
-      'div[data-message-id] div.a3s',  // Scoped to message
-      'div.ii.gt',                      // Another body container
+      'div.a3s.aiL',
+      'div.a3s',
+      'div[data-message-id] div.a3s',
+      'div.ii.gt',
     ];
 
     for (const sel of bodySelectors) {
-      const el = document.querySelector(sel);
+      const el = getVisibleOrLast(sel);
       if (el) {
         body = el.innerText.trim();
         if (body) break;
       }
     }
 
-    // If multiple email bodies (conversation), get all
     if (!body) {
-      const allBodies = document.querySelectorAll('div.a3s');
+      const allBodies = Array.from(document.querySelectorAll('div.a3s')).filter(el => el.offsetWidth > 0 || el.offsetHeight > 0);
       if (allBodies.length > 0) {
-        body = Array.from(allBodies).map(el => el.innerText.trim()).join('\n---\n');
+        body = allBodies.map(el => el.innerText.trim()).join('\n---\n');
       }
     }
   }
 
   else if (window.location.hostname.includes('outlook.live.com') || window.location.hostname.includes('outlook.office.com')) {
     // Sender
-    const senderEl = document.querySelector('[data-testid="SenderPersona"] span') ||
-      document.querySelector('.lpc-hoverTarget span');
+    const senderEl = getVisibleOrLast('[data-testid="SenderPersona"] span') ||
+      getVisibleOrLast('.lpc-hoverTarget span');
     if (senderEl) sender = senderEl.textContent.trim();
 
     // Subject
-    const subjectEl = document.querySelector('[role="heading"][aria-level="2"]') ||
-      document.querySelector('span[title].rps_49dc');
+    const subjectEl = getVisibleOrLast('[role="heading"][aria-level="2"]') ||
+      getVisibleOrLast('span[title].rps_49dc');
     if (subjectEl) subject = subjectEl.textContent.trim();
 
     // Body
-    const bodyEl = document.querySelector('[role="document"]') ||
-      document.querySelector('div[aria-label="Message body"]');
+    const bodyEl = getVisibleOrLast('[role="document"]') ||
+      getVisibleOrLast('div[aria-label="Message body"]');
     if (bodyEl) body = bodyEl.innerText.trim();
   }
 

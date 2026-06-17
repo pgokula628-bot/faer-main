@@ -141,9 +141,14 @@ def analyze_url():
     features['trusted_domain'] = 1 if any(hostname == d or hostname.endswith('.' + d) for d in TRUSTED_DOMAINS) else 0
 
     # 2. Machine Learning Prediction on URL using Real Dataset Model
-    url_vec = url_vectorizer.transform([url])
-    ml_prob = url_model.predict_proba(url_vec)[0][1] # Phishing probability
-    ml_pred = int(url_model.predict(url_vec)[0])
+    if url.startswith('file:') or 'localhost' in hostname or '127.0.0.1' in hostname:
+        # Use content model for local files/localhost based on page text
+        content_to_classify = body_text if body_text else url
+        vec = email_vectorizer.transform([content_to_classify])
+        ml_prob = email_model.predict_proba(vec)[0][1]
+    else:
+        url_vec = url_vectorizer.transform([url])
+        ml_prob = url_model.predict_proba(url_vec)[0][1] # Phishing probability
 
     # 3. Correlation & Risk Scoring
     risk_factors = []

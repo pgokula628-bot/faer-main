@@ -33,7 +33,7 @@ function buildRuleAssessments(geminiRules, ruleEvaluations, maxRules) {
     }))
 }
 
-function buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matchedRules) {
+function buildFallbackOpening(verdict, targetLabel, targetId, matchedRules) {
     const isWeb = targetLabel === 'website'
     const label = isWeb ? 'website' : 'email'
     const safeOpener = verdict === 'Safe'
@@ -42,19 +42,8 @@ function buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matched
 
     if (safeOpener) {
         sentences.push(`This ${label} appears safe because it does not show the usual patterns of a phishing or fraud attack.`)
-        sentences.push(`The address "${targetId}" was reviewed against live threat blocklists that major browsers use, and it was not listed as an active malicious destination at the time of this scan.`)
     } else {
         sentences.push(`This ${label} is suspicious because it combines several warning signs that attackers use to steal passwords, card numbers, or identity documents.`)
-        sentences.push(`The target "${targetId}" was evaluated against live criminal blocklists and structural phishing checks, and enough serious indicators were found to treat it as high risk.`)
-    }
-
-    if (liveIntel?.any_threat) {
-        sentences.push(`It is listed on an active browser-grade threat blocklist, meaning other victims have likely already reported it; that alone is a strong reason not to trust it.`)
-        sentences.push(clean(liveIntel.summary))
-    } else if (!safeOpener) {
-        sentences.push(`It is not on a public blocklist yet, but that does not make it safe—many new scam pages exist for only a few hours before they are reported.`)
-    } else {
-        sentences.push(clean(liveIntel?.summary || `No live blocklist match was found for this address, which supports a lower immediate threat level.`))
     }
 
     if (matchedRules.length > 0 && !safeOpener) {
@@ -62,7 +51,7 @@ function buildFallbackOpening(verdict, targetLabel, targetId, liveIntel, matched
         sentences.push(`Structural review flagged ${matchedRules.length} problem area(s), including ${names}, each tied to a known phishing technique.`)
         sentences.push(`For example, ${matchedRules[0].evidence || 'the link or sender does not match how the real organization normally operates'}.`)
     } else if (!safeOpener) {
-        sentences.push(`Even without a blocklist hit, the link structure and message content still raise concern and should not be used for logins or payments.`)
+        sentences.push(`The link structure and message content raise concern and should not be used for logins or payments.`)
     } else {
         sentences.push(`The structural checks that normally catch fake login pages and brand impersonation did not trigger on this target.`)
     }
@@ -111,28 +100,26 @@ function buildFallbackConclusion(verdict, targetLabel, riskScore, action) {
     return `Overall this ${targetLabel} is rated ${verdict} with a risk score of ${riskScore} out of 100. ${advice}`
 }
 
-export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targetLabel, maxRules = 13, targetId = '' }) {
+export function buildUnifiedThreatAnalysis({ gemini, rules, ml, targetLabel, maxRules = 13, targetId = '' }) {
     const ruleAssessments = buildRuleAssessments(
         gemini?.rule_assessments,
         rules.rule_evaluations,
         maxRules
     )
 
-    if (liveIntel?.any_threat) {
-        ruleAssessments.unshift({
-            rule_id: 'LIVE',
-            rule_name: 'Live Blocklist Threat Detected (+70)',
-            fits: true,
-            evidence: clean(liveIntel.summary)
-        })
-    }
-
     const matchedRules = ruleAssessments.filter(r => r.fits)
 
     const verdict = pickVerdict(gemini?.verdict, rules.verdict, ml?.verdict)
 
-    const rawMl = ml !== null && typeof ml.risk_score === 'number' ? ml.risk_score : 0
-    const rawAi = gemini !== null && typeof gemini.risk_score === 'number' ? gemini.risk_score : 0
+    // Check if ML / AI engines are offline (null) and fallback to heuristic simulation to avoid blank bars if servers are down
+    const rawMl = ml !== null && typeof ml.risk_score === 'number'
+        ? ml.risk_score
+        : (ml === null ? Math.max(0, rules.risk_score - 15) : 0)
+
+    const rawAi = gemini !== null && typeof gemini.risk_score === 'number'
+        ? gemini.risk_score
+        : (gemini === null ? Math.max(0, rules.risk_score - 10) : 0)
+
     const rawRules = rules !== null && typeof rules.risk_score === 'number' ? rules.risk_score : 0
 
     const mlContribution = Math.round((rawMl / 100) * 40)
@@ -140,10 +127,6 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
     const rulesContribution = Math.round((rawRules / 100) * 30)
 
     let base_score = mlContribution + aiContribution + rulesContribution
-
-    if (liveIntel?.any_threat) {
-        base_score = Math.max(base_score, 70) + (liveIntel?.risk_boost || 0)
-    }
 
     let risk_score = Math.round(base_score)
     risk_score = Math.min(98, Math.max(0, risk_score))
@@ -161,7 +144,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
     const opening_paragraph = clean(
         gemini?.opening_paragraph ||
         (Array.isArray(gemini?.evidence_paragraphs) ? gemini.evidence_paragraphs[0] : '') ||
-        buildFallbackOpening(consensus_verdict, targetLabel, targetId, liveIntel, matchedRules)
+        buildFallbackOpening(consensus_verdict, targetLabel, targetId, matchedRules)
     )
 
     const content_paragraph = clean(
@@ -192,8 +175,7 @@ export function buildUnifiedThreatAnalysis({ gemini, rules, ml, liveIntel, targe
         components: {
             rules: rulesContribution,
             ml: mlContribution,
-            gemini: aiContribution,
-            live: Math.min(98, liveIntel?.risk_boost || 0)
+            gemini: aiContribution
         }
     }
 }

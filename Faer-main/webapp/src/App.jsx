@@ -94,7 +94,7 @@ function App() {
 
         // Clear stale cached reports from old scoring formula (one-time migration)
         const cacheVersion = localStorage.getItem('threatlens_cache_version')
-        if (cacheVersion !== 'v3-file-protocol-fix') {
+        if (cacheVersion !== 'v6-clear-history-migration') {
             const keysToRemove = []
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i)
@@ -103,7 +103,8 @@ function App() {
                 }
             }
             keysToRemove.forEach(k => localStorage.removeItem(k))
-            localStorage.setItem('threatlens_cache_version', 'v3-file-protocol-fix')
+            localStorage.removeItem('scan_history')
+            localStorage.setItem('threatlens_cache_version', 'v6-clear-history-migration')
         }
 
         const currentUser = localStorage.getItem('threatlens_current_user')
@@ -285,17 +286,16 @@ function App() {
         }
     }
 
-    const buildWebsiteGeminiPrompt = (targetUrl, targetText, ruleResult, liveIntel) => {
+    const buildWebsiteGeminiPrompt = (targetUrl, targetText, ruleResult) => {
         const rulesSummary = JSON.stringify(ruleResult.rule_evaluations || [])
         return `You are a senior cybersecurity analyst. Write ONLY factual findings—never mention AI, machine learning, APIs, models, or software tools.
 
 URL: ${targetUrl}
 Page content: ${(targetText || '').substring(0, 4000)}
-Live blocklist: ${liveIntel?.summary || 'unavailable'}
 Security rule results: ${rulesSummary}
 
 Provide three text fields (no tool names anywhere):
-1) "opening_paragraph": 8–10 full sentences. Must start with "This website is suspicious because" OR "This website appears safe because". Cite blocklist result and main red flags with quoted facts from the URL.
+1) "opening_paragraph": 8–10 full sentences. Must start with "This website is suspicious because" OR "This website appears safe because". Cite main red flags with quoted facts from the URL.
 2) "content_paragraph": exactly 4 sentences about page wording, forms, urgency, sensitive data requests, bad links.
 3) "conclusion_paragraph": 3–5 sentences with final rating and clear user advice.
 
@@ -314,18 +314,17 @@ Return ONLY valid JSON:
 }`
     }
 
-    const buildEmailGeminiPrompt = (sender, subject, body, ruleResult, liveIntel) => {
+    const buildEmailGeminiPrompt = (sender, subject, body, ruleResult) => {
         const rulesSummary = JSON.stringify(ruleResult.rule_evaluations || [])
         return `You are a senior cybersecurity analyst. Write ONLY factual findings—never mention AI, machine learning, APIs, models, or software tools.
 
 Sender: ${sender}
 Subject: ${subject}
 Body: ${body.substring(0, 5000)}
-Live blocklist on links: ${liveIntel?.summary || 'unavailable'}
 Security rule results: ${rulesSummary}
 
 Provide three text fields (no tool names):
-1) "opening_paragraph": 8–10 sentences. Start with "This email is suspicious because" OR "This email appears safe because". Quote sender, subject, blocklist, main threats.
+1) "opening_paragraph": 8–10 sentences. Start with "This email is suspicious because" OR "This email appears safe because". Quote sender, subject, main threats.
 2) "content_paragraph": exactly 4 sentences on body wording, links, urgency, credential requests.
 3) "conclusion_paragraph": 3–5 sentences with final advice.
 
@@ -358,7 +357,7 @@ Provide three text fields (no tool names):
 2) "content_paragraph": exactly 4 sentences on chat wording, links, urgency, investment/crypto fraud, credential requests.
 3) "conclusion_paragraph": 3–5 sentences with final advice.
 
-Return "rule_assessments" for ALL 6 rules with fits and evidence.
+Return "rule_assessments" for ALL 14 rules with fits and evidence.
 
 Return ONLY valid JSON:
 {
@@ -368,14 +367,14 @@ Return ONLY valid JSON:
   "opening_paragraph": "8-10 sentences...",
   "content_paragraph": "4 sentences...",
   "conclusion_paragraph": "3-5 sentences...",
-  "rule_assessments": [{"rule_id": 1, "rule_name": "Sender Number Format", "fits": false, "evidence": "..."}],
+  "rule_assessments": [{"rule_id": 1, "rule_name": "Urgency Language Detection", "fits": false, "evidence": "..."}],
   "action": "short advice"
 }`
     }
 
-    const finalizeWebsiteReport = (targetUrl, targetText, gemini, rules, ml, liveIntel) => {
+    const finalizeWebsiteReport = (targetUrl, targetText, gemini, rules, ml) => {
         const unified = buildUnifiedThreatAnalysis({
-            gemini, rules, ml, liveIntel, targetLabel: 'website', maxRules: 13, targetId: targetUrl
+            gemini, rules, ml, targetLabel: 'website', maxRules: 13, targetId: targetUrl
         })
         return mergeFullReport({
             ...rules,
@@ -386,25 +385,31 @@ Return ONLY valid JSON:
         }, unified)
     }
 
-    const finalizeEmailReport = (sender, gemini, rules, ml, liveIntel) => {
+    const finalizeEmailReport = (sender, gemini, rules, ml) => {
         const unified = buildUnifiedThreatAnalysis({
-            gemini, rules, ml, liveIntel, targetLabel: 'email', maxRules: 14, targetId: sender
+            gemini, rules, ml, targetLabel: 'email', maxRules: 14, targetId: sender
         })
         return mergeFullReport({
             ...rules,
+            sender: sender,
+            type: 'email',
             summary: gemini?.summary || rules.summary,
-            action: gemini?.action || rules.action
+            action: gemini?.action || rules.action,
+            timestamp: new Date().toISOString()
         }, unified)
     }
 
-    const finalizeChatReport = (sender, gemini, rules, ml, liveIntel) => {
+    const finalizeChatReport = (sender, gemini, rules, ml) => {
         const unified = buildUnifiedThreatAnalysis({
-            gemini, rules, ml, liveIntel, targetLabel: 'chat message', maxRules: 6, targetId: sender
+            gemini, rules, ml, targetLabel: 'chat message', maxRules: 14, targetId: sender
         })
         return mergeFullReport({
             ...rules,
+            sender: sender,
+            type: 'chat',
             summary: gemini?.summary || rules.summary,
-            action: gemini?.action || rules.action
+            action: gemini?.action || rules.action,
+            timestamp: new Date().toISOString()
         }, unified)
     }
 
@@ -422,14 +427,11 @@ Return ONLY valid JSON:
         }
 
         try {
-            const extraUrls = extractUrlsFromText(targetText || '')
-            const liveIntel = await fetchLiveThreatIntel(targetUrl, extraUrls)
-
             setAnalysisPhase('gemini')
             let gemini = null
             try {
                 const rulesPreview = analyzeWebsite(targetUrl, targetText || '')
-                gemini = await callGeminiLLM(buildWebsiteGeminiPrompt(targetUrl, targetText, rulesPreview, liveIntel))
+                gemini = await callGeminiLLM(buildWebsiteGeminiPrompt(targetUrl, targetText, rulesPreview))
             } catch (e) {
                 console.warn('Analysis API skipped:', e.message)
             }
@@ -445,7 +447,7 @@ Return ONLY valid JSON:
                 const mlResponse = await fetch('http://localhost:5000/api/analyze/url', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: targetUrl, bodyText: targetText || '', liveIntel })
+                    body: JSON.stringify({ url: targetUrl, bodyText: targetText || '' })
                 })
                 if (mlResponse.ok) {
                     ml = await mlResponse.json()
@@ -454,7 +456,7 @@ Return ONLY valid JSON:
                 console.error('Python ML Backend disconnected or errored:', e)
             }
 
-            const finalReport = finalizeWebsiteReport(targetUrl, targetText, gemini, rules, ml, liveIntel)
+            const finalReport = finalizeWebsiteReport(targetUrl, targetText, gemini, rules, ml)
             setCachedReport('website', targetUrl, targetText || '', finalReport)
             setReport(finalReport)
             setHistory(saveHistory(finalReport))
@@ -486,20 +488,18 @@ Return ONLY valid JSON:
         const cached = getCachedReport('email', useSender, useSubject + '||' + useBody)
         if (cached?.analysis_mode === 'unified-v4') {
             setEmailReport(cached)
+            setHistory(saveHistory(cached))
             setEmailAnalysisPhase('done')
             setEmailStatus('success')
             return
         }
 
         try {
-            const linkUrls = extractUrlsFromText(useBody)
-            const liveIntel = await fetchLiveThreatIntel(linkUrls[0] || `mailto:${useSender}`, linkUrls)
-
             setEmailAnalysisPhase('gemini')
             let gemini = null
             try {
                 const rulesPreview = analyzeEmail(useSender, useSubject, useBody)
-                gemini = await callGeminiLLM(buildEmailGeminiPrompt(useSender, useSubject, useBody, rulesPreview, liveIntel))
+                gemini = await callGeminiLLM(buildEmailGeminiPrompt(useSender, useSubject, useBody, rulesPreview))
             } catch (e) {
                 console.warn('Analysis API skipped:', e.message)
             }
@@ -515,7 +515,7 @@ Return ONLY valid JSON:
                 const mlResponse = await fetch('http://localhost:5000/api/analyze/email', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sender: useSender, subject: useSubject, body: useBody, liveIntel })
+                    body: JSON.stringify({ sender: useSender, subject: useSubject, body: useBody })
                 })
                 if (mlResponse.ok) {
                     ml = await mlResponse.json()
@@ -524,7 +524,7 @@ Return ONLY valid JSON:
                 console.error('Python ML Backend disconnected or errored:', e)
             }
 
-            const finalReport = finalizeEmailReport(useSender, gemini, rules, ml, liveIntel)
+            const finalReport = finalizeEmailReport(useSender, gemini, rules, ml)
             setCachedReport('email', useSender, useSubject + '||' + useBody, finalReport)
             setEmailReport(finalReport)
             setHistory(saveHistory(finalReport))
@@ -561,20 +561,18 @@ Return ONLY valid JSON:
         const cached = getCachedReport('chat', useSender, useMessage)
         if (cached?.analysis_mode === 'unified-v4') {
             setChatReport(cached)
+            setHistory(saveHistory(cached))
             setChatAnalysisPhase('done')
             setChatStatus('success')
             return
         }
 
         try {
-            const linkUrls = extractUrlsFromText(useMessage)
-            const liveIntel = await fetchLiveThreatIntel(linkUrls[0] || '', linkUrls)
-
             setChatAnalysisPhase('gemini')
             let gemini = null
             try {
                 const rulesPreview = analyzeChat(useSender, useMessage)
-                gemini = await callGeminiLLM(buildChatGeminiPrompt(useSender, useMessage, rulesPreview, liveIntel))
+                gemini = await callGeminiLLM(buildChatGeminiPrompt(useSender, useMessage, rulesPreview))
             } catch (e) {
                 console.warn('Analysis API skipped:', e.message)
             }
@@ -590,7 +588,7 @@ Return ONLY valid JSON:
                 const mlResponse = await fetch('http://localhost:5000/api/analyze/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sender: useSender, message: useMessage, liveIntel })
+                    body: JSON.stringify({ sender: useSender, message: useMessage })
                 })
                 if (mlResponse.ok) {
                     ml = await mlResponse.json()
@@ -599,7 +597,7 @@ Return ONLY valid JSON:
                 console.error('Python ML Backend disconnected or errored:', e)
             }
 
-            const finalReport = finalizeChatReport(useSender, gemini, rules, ml, liveIntel)
+            const finalReport = finalizeChatReport(useSender, gemini, rules, ml)
             setCachedReport('chat', useSender, useMessage, finalReport)
             setChatReport(finalReport)
             setHistory(saveHistory(finalReport))
@@ -681,11 +679,10 @@ Return ONLY valid JSON:
                                     const engines = [
                                         { name: 'Rules', score: activeReport.components.rules },
                                         { name: 'ML', score: activeReport.components.ml },
-                                        { name: 'Open Source AI', score: activeReport.components.gemini },
-                                        { name: 'Live Intel', score: activeReport.components.live }
+                                        { name: 'Open Source AI', score: activeReport.components.gemini }
                                     ]
                                     return engines.map((eng, i) => {
-                                        const x = 75 + (i * 70)
+                                        const x = 85 + (i * 90)
                                         const h = Math.max(1, (eng.score / 100) * 80)
                                         const y = 120 - h
                                         return (
@@ -823,16 +820,26 @@ Return ONLY valid JSON:
                     </div>
 
                     <div className="activity-list">
-                        {history.slice(0, 5).map((h, i) => (
-                            <div key={i} className="activity-item">
-                                <div className="activity-icon"><Globe size={14} /></div>
-                                <div className="activity-details">
-                                    <div className="activity-domain">{h.url ? new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname : 'Unknown'}</div>
-                                    <div className="activity-time">{new Date(h.timestamp).toLocaleTimeString()}</div>
+                        {history.slice(0, 5).map((h, i) => {
+                            const isWeb = h.type === 'website' || h.url;
+                            const isChat = h.type === 'chat';
+                            const title = isWeb 
+                                ? (() => { try { return new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname } catch { return h.url || 'Unknown Website' } })()
+                                : (h.sender || 'Unknown Sender');
+                            
+                            return (
+                                <div key={i} className="activity-item">
+                                    <div className="activity-icon">
+                                        {isWeb ? <Globe size={14} /> : isChat ? <MessageSquare size={14} /> : <Mail size={14} />}
+                                    </div>
+                                    <div className="activity-details">
+                                        <div className="activity-domain" style={{ wordBreak: 'break-all' }}>{title}</div>
+                                        <div className="activity-time">{h.timestamp ? new Date(h.timestamp).toLocaleTimeString() : 'Unknown Time'}</div>
+                                    </div>
+                                    <div className={`activity-badge ${h.verdict ? h.verdict.toLowerCase() : 'safe'}`}>{h.verdict || 'Safe'}</div>
                                 </div>
-                                <div className={`activity-badge ${h.verdict.toLowerCase()}`}>{h.verdict}</div>
-                            </div>
-                        ))}
+                            );
+                        })}
                         {history.length === 0 && (
                             <div className="empty-activity"><p>No recent scans</p></div>
                         )}
@@ -1022,27 +1029,51 @@ Return ONLY valid JSON:
 
                         <div className="history-content">
                             <div className="history-grid">
-                                {history.map((h, i) => (
-                                    <div
-                                        key={i}
-                                        className="history-card"
-                                        onClick={() => { setReport(h); setStatus('success'); setView(h.url ? 'dashboard' : 'email'); }}
-                                    >
-                                        <div className="card-header">
-                                            <div className={`status-dot ${(h?.verdict || 'safe').toLowerCase()}`}></div>
-                                            <span className="card-domain">
-                                                {h?.url ? (
-                                                    (() => { try { return new URL(h.url).hostname } catch { return h.url } })()
-                                                ) : 'Email Scan'}
-                                            </span>
+                                {history.map((h, i) => {
+                                    const isWeb = h.type === 'website' || h.url;
+                                    const isChat = h.type === 'chat';
+                                    const title = isWeb 
+                                        ? (() => { try { return new URL(h.url.startsWith('http') ? h.url : `https://${h.url}`).hostname } catch { return h.url || 'Unknown Website' } })()
+                                        : (h.sender || 'Unknown Sender');
+                                    const scanLabel = isWeb ? 'Website Scan' : isChat ? 'Chat Scan' : 'Email Scan';
+
+                                    return (
+                                        <div
+                                            key={i}
+                                            className="history-card"
+                                            onClick={() => {
+                                                if (isWeb) {
+                                                    setReport(h);
+                                                    setStatus('success');
+                                                    setView('dashboard');
+                                                } else if (isChat) {
+                                                    setChatReport(h);
+                                                    setChatStatus('success');
+                                                    setView('chat');
+                                                } else {
+                                                    setEmailReport(h);
+                                                    setEmailStatus('success');
+                                                    setView('email');
+                                                }
+                                            }}
+                                        >
+                                            <div className="card-header">
+                                                <div className={`status-dot ${(h?.verdict || 'safe').toLowerCase()}`}></div>
+                                                <span className="card-domain" style={{ wordBreak: 'break-all' }}>
+                                                    {title}
+                                                </span>
+                                                <span className="card-badge" style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                                                    {scanLabel}
+                                                </span>
+                                            </div>
+                                            <div className="card-summary">{h?.summary || 'Analysis Complete'}</div>
+                                            <div className="card-footer">
+                                                <span className="card-time">{h.timestamp ? new Date(h.timestamp).toLocaleString() : 'Unknown Time'}</span>
+                                                <span className="card-score">Risk: {h.risk_score}/100</span>
+                                            </div>
                                         </div>
-                                        <div className="card-summary">{h?.summary || 'Analysis Complete'}</div>
-                                        <div className="card-footer">
-                                            <span className="card-time">{new Date(h.timestamp).toLocaleString()}</span>
-                                            <span className="card-score">Risk: {h.risk_score}/100</span>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
@@ -1162,6 +1193,11 @@ Return ONLY valid JSON:
                                                             {emailReport.verdict}
                                                         </div>
                                                         <p className="report-title">{emailReport.summary}</p>
+                                                        {emailReport.sender && (
+                                                            <div className="report-sender-meta" style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '8px', borderLeft: '2.5px solid var(--accent-primary)', paddingLeft: '8px', wordBreak: 'break-all' }}>
+                                                                Sender: <span style={{ color: 'var(--text-primary)', fontWeight: '500', fontFamily: 'Space Grotesk' }}>{emailReport.sender}</span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     <div className="risk-section">
                                                         <div className="risk-label">Phishing Score</div>
@@ -1296,6 +1332,11 @@ Return ONLY valid JSON:
                                                             {chatReport.verdict}
                                                         </div>
                                                         <p className="report-title">{chatReport.summary}</p>
+                                                        {chatReport.sender && (
+                                                            <div className="report-sender-meta" style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '8px', borderLeft: '2.5px solid var(--accent-primary)', paddingLeft: '8px', wordBreak: 'break-all' }}>
+                                                                Sender: <span style={{ color: 'var(--text-primary)', fontWeight: '500', fontFamily: 'Space Grotesk' }}>{chatReport.sender}</span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     <div className="risk-section">
                                                         <div className="risk-label">Threat Score</div>
